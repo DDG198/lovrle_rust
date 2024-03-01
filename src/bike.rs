@@ -1,6 +1,9 @@
-use std::iter::{repeat, zip};
+use std::{
+    collections::HashMap,
+    iter::{repeat, zip},
+};
 
-use crate::road::RoadOccupier;
+use crate::road::{RoadCells, RoadOccupier, Vehicle};
 
 pub struct Bike {
     front: isize,
@@ -12,6 +15,23 @@ pub struct Bike {
     forward_acceleration: isize,
     rightward_speed_max: isize,
     rightward_speed: isize,
+}
+impl Bike {
+    pub fn lateral_update<const L: usize, const BLW: usize, const MLW: usize>(
+        &self,
+        cells: &RoadCells<L, BLW, MLW>,
+    ) -> Bike {
+        let mut valid_ys = (-self.rightward_speed_max..self.rightward_speed_max)
+            .map(|rightward_speed| self.right + rightward_speed)
+            .filter(|new_right| {
+                let potential_bike = Bike {
+                    right: *new_right,
+                    ..*self
+                };
+                true
+            });
+        Bike { ..*self }
+    }
 }
 
 impl RoadOccupier for Bike {
