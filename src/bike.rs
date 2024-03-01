@@ -1,10 +1,8 @@
-use std::{
-    collections::HashMap,
-    iter::{repeat, zip},
-};
+use std::iter::{repeat, zip};
 
-use crate::road::{RoadCells, RoadOccupier, Vehicle};
+use crate::road::{RoadCells, RoadOccupier};
 
+#[derive(Debug)]
 pub struct Bike {
     front: isize,
     right: isize,

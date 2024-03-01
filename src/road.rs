@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 
 use crate::{bike::Bike, car::Car};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Vehicle {
     Bike(usize),
     Car(usize),
@@ -31,20 +31,6 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         }
     }
 
-    // Maybe would be best for the Road struct to handle this, based on the id
-    // on a Vehicle variant? This way, handling self-collisions is simple as we
-    // already would know the id of things we want to ignore.
-    fn collides(&self, vehicle: impl RoadOccupier) -> bool {
-        return vehicle
-            .occupied_cells()
-            .into_iter()
-            // maybe better to handle the error here instead of unwrapping
-            // ideally, this wouldn't fail as vehicles would always stay within
-            // bounds
-            .map(|(x, y)| Self::validate_coord(x, y).unwrap())
-            .any(|occupied_cell| self.cells.contains_key(&occupied_cell));
-    }
-
     fn validate_coord(x: isize, y: isize) -> Result<(isize, isize)> {
         match y < Self::total_width() {
             true => Ok((x.rem_euclid(L as isize), y)),
@@ -58,6 +44,10 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
 
     const fn total_width() -> isize {
         return (BLW + MLW) as isize;
+    }
+
+    fn get(&self, coord: &(isize, isize)) -> Option<&Vehicle> {
+        self.cells.get(coord)
     }
 }
 
@@ -74,9 +64,10 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .try_for_each(
                 |(cell, insert_vehicle)| match cells.insert(cell, insert_vehicle) {
                     Some(found_vehicle) => Err(anyhow!(
-                        "inserted vehicle {:?} collided with found vehicle {:?}",
-                        insert_vehicle,
-                        found_vehicle
+                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}",
+                        cells.get(&cell),
+                        found_vehicle,
+                        cell
                     )),
                     None => Ok(()),
                 },
@@ -96,13 +87,7 @@ pub struct Road<const B: usize, const C: usize, const L: usize, const BLW: usize
 impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW: usize>
     Road<B, C, L, BLW, MLW>
 {
-    pub fn new(
-        length: usize,
-        ml_width: usize,
-        bl_width: usize,
-        bikes: [Bike; B],
-        cars: [Car; C],
-    ) -> Result<Self> {
+    pub fn new(bikes: [Bike; B], cars: [Car; C]) -> Result<Self> {
         let mut road = Self {
             bikes,
             cars,
@@ -137,6 +122,31 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .map(|(cell, bike_id)| (cell, Vehicle::Bike(bike_id)));
     }
 
+    fn vehicle_collides(&self, vehicle: Vehicle) -> bool {
+        let occupied_cells: Vec<(isize, isize)> = match vehicle {
+            Vehicle::Bike(bike_id) => self
+                .bikes
+                .get(bike_id)
+                .expect("bike_id should be valid")
+                .occupied_cells()
+                .into_iter()
+                .collect(),
+            Vehicle::Car(car_id) => self
+                .cars
+                .get(car_id)
+                .expect("car_id should be valid")
+                .occupied_cells()
+                .into_iter()
+                .collect(),
+        };
+
+        return occupied_cells
+            .into_iter()
+            .map(|(x, y)| RoadCells::<L, BLW, MLW>::validate_coord(x, y).unwrap())
+            .filter_map(|coord| self.cells.get(&coord))
+            .any(|found_vehicle| *found_vehicle != vehicle);
+    }
+
     pub fn update(&mut self) {
         self.bikes_lateral_update();
         self.bikes_forward_update();
@@ -148,7 +158,10 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .bikes
             .iter()
             .map(|bike| bike.lateral_update(&self.cells))
-            .collect();
+            .collect::<Vec<Bike>>()
+            .try_into()
+            .expect("length should be okay");
+        todo!()
     }
 
     fn bikes_forward_update(&self) {
