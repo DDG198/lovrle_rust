@@ -1,34 +1,24 @@
 use std::iter::{repeat, zip};
 
-use crate::road::{RoadCells, RoadOccupier};
+use crate::road::RoadOccupier;
 
 #[derive(Debug)]
 pub struct Bike {
-    front: isize,
-    right: isize,
-    length: isize,
-    width: isize,
+    pub front: isize,
+    pub right: isize,
+    pub length: isize,
+    pub width: isize,
     forward_speed_max: isize,
     forward_speed: isize,
     forward_acceleration: isize,
     rightward_speed_max: isize,
     rightward_speed: isize,
 }
+
 impl Bike {
-    pub fn lateral_update<const L: usize, const BLW: usize, const MLW: usize>(
-        &self,
-        cells: &RoadCells<L, BLW, MLW>,
-    ) -> Bike {
-        let mut valid_ys = (-self.rightward_speed_max..self.rightward_speed_max)
-            .map(|rightward_speed| self.right + rightward_speed)
-            .filter(|new_right| {
-                let potential_bike = Bike {
-                    right: *new_right,
-                    ..*self
-                };
-                true
-            });
-        Bike { ..*self }
+    /// Returns the positions that the bike could move to laterally
+    pub fn potential_lateral_positions(&self) -> impl IntoIterator<Item = isize> {
+        return self.right - self.rightward_speed_max..self.right + self.rightward_speed_max;
     }
 }
 

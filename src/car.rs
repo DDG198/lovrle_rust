@@ -1,4 +1,7 @@
-use std::iter::{repeat, zip};
+use std::{
+    cmp::min,
+    iter::{repeat, zip},
+};
 
 use crate::road::RoadOccupier;
 
@@ -48,5 +51,17 @@ impl Car {
     fn lateral_occupancy(&self) -> isize {
         let additional_width = self.alpha * self.speed as f32;
         return (self.const_width + additional_width).ceil() as isize;
+    }
+
+    // pub fn speed(&self) -> isize {
+    //     return self.speed;
+    // }
+
+    pub fn next_iteration_potential_speed(&self) -> isize {
+        return min(self.speed + self.acceleration, self.max_speed as isize);
+    }
+
+    pub fn front(&self) -> isize {
+        return self.front;
     }
 }
