@@ -17,7 +17,7 @@ pub struct Car {
 }
 
 impl RoadOccupier for Car {
-    fn occupied_cells(&self) -> impl IntoIterator<Item = (isize, isize)> {
+    fn occupied_cells(&self) -> impl Iterator<Item = (isize, isize)> {
         return (0isize..self.lateral_occupancy())
             .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
             .flatten();
