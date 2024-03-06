@@ -45,6 +45,10 @@ impl Bike {
             .sample(&mut rand::thread_rng());
     }
 
+    fn y_j_t_plus_1(&self) -> impl Iterator<Item = isize> {
+        return self.potential_lateral_positions();
+    }
+
     pub fn self_lateral_update<
         const B: usize,
         const C: usize,
@@ -59,80 +63,51 @@ impl Bike {
         if self.should_ignore_lateral_movement() {
             return Self { ..*self };
         }
-        // Y_{j,t+1}
-        let y_j_t_plus_1 = self.potential_lateral_positions();
         // Y'_{j,t+1}
-        let y_prime_j_t_plus_1 = y_j_t_plus_1
-            // if the rhs of the bike is off the side, it will not be valid
-            .filter(|x| *x < Road::<B, C, L, BLW, MLW>::total_width())
-            // Step 1: check the availability of possible lateral positions
-            .map(|position| RectangleOccupier {
-                front: self.front,
-                right: position,
-                width: self.width,
-                length: self.length,
-            })
-            // if the lhs of the bike is off the side, it will not be valid
-            .filter(|potential_occupation| 0 <= potential_occupation.left())
-            .filter(|potential_occupation| {
-                road.collisions_for(potential_occupation)
-                    .into_iter()
-                    // only a collision if the found vehicle is not this bike
-                    .any(|found_vehicle| match found_vehicle {
-                        Vehicle::Bike(found_bike_id) => *found_bike_id != self_id,
-                        Vehicle::Car(_) => true,
-                    })
-            });
-
-        // just for debugging
-        let y_prime_j_t_plus_1: Vec<RectangleOccupier> = y_prime_j_t_plus_1.collect();
-        debug_assert!(!y_prime_j_t_plus_1.is_empty());
+        let y_prime_j_t_plus_1 = self.y_prime_j_t_plus_1(road, &self_id);
 
         let current_occupation = self.rectangle_occupation();
-        let mut y_prime_prime_j_t_plus_1: Vec<RectangleOccupier> = match road
-            .motor_lane_contains_occupier(&current_occupation)
-        {
-            // on motor lane
-            true => match road.is_blocking(&current_occupation.back_left(), None) {
-                // motor lane blocking
-                true => {
-                    let mut on_motor_lane = Vec::<RectangleOccupier>::new();
-                    let mut on_bike_lane = Vec::<RectangleOccupier>::new();
+        let y_prime_prime_j_t_plus_1: Vec<RectangleOccupier> =
+            match road.motor_lane_contains_occupier(&current_occupation) {
+                // on motor lane
+                true => match road.is_blocking(&current_occupation.back_left(), None) {
+                    // motor lane blocking
+                    true => {
+                        let mut on_motor_lane = Vec::<RectangleOccupier>::new();
+                        let mut on_bike_lane = Vec::<RectangleOccupier>::new();
 
-                    for occupier in y_prime_j_t_plus_1 {
-                        match road.motor_lane_contains_occupier(&occupier) {
-                            true => on_motor_lane.push(occupier),
-                            false => on_bike_lane.push(occupier),
+                        for occupier in y_prime_j_t_plus_1 {
+                            match road.motor_lane_contains_occupier(&occupier) {
+                                true => on_motor_lane.push(occupier),
+                                false => on_bike_lane.push(occupier),
+                            }
+                        }
+
+                        // if can move to bike lane:
+                        //   - bike lane occupations
+                        // else
+                        //   - furthest right occupation
+                        match on_bike_lane.is_empty() {
+                            true => vec![*on_motor_lane
+                                .last() // assuming that y_prime is left to right
+                                .expect("bike should be able to stay still")],
+                            false => on_bike_lane,
                         }
                     }
-
-                    // if can move to bike lane:
-                    //   - bike lane occupations
-                    // else
-                    //   - furthest right occupation
-                    match on_bike_lane.is_empty() {
-                        true => vec![*on_motor_lane
-                            .last() // assuming that y_prime is left to right
-                            .expect("bike should be able to stay still")],
-                        false => on_bike_lane,
-                    }
-                }
-                // motor lane non-blocking
-                // check exactly what the boundary should be here: lhs or rhs
-                false => Self::avoid_blocking_ypp_filter(
-                    // into_iter here and below for debugging
-                    y_prime_j_t_plus_1.into_iter(),
-                    &road,
-                    current_occupation.right,
-                )
-                .collect(),
-            },
-            // on bike lane
-            false => {
-                Self::avoid_blocking_ypp_filter(y_prime_j_t_plus_1.into_iter(), &road, MLW as isize)
-                    .collect()
-            }
-        };
+                    // motor lane non-blocking
+                    // check exactly what the boundary should be here: lhs or rhs
+                    false => Self::avoid_blocking_ypp_filter(
+                        // into_iter here and below for debugging
+                        y_prime_j_t_plus_1,
+                        &road,
+                        current_occupation.right,
+                    )
+                    .collect(),
+                },
+                // on bike lane
+                false => Self::avoid_blocking_ypp_filter(y_prime_j_t_plus_1, &road, MLW as isize)
+                    .collect(),
+            };
 
         // select Y'' with the furthest front gap
         debug_assert!(!y_prime_prime_j_t_plus_1.is_empty());
@@ -141,6 +116,41 @@ impl Bike {
             right: selected_occupation.right,
             ..*self
         }
+    }
+
+    fn y_prime_j_t_plus_1<
+        'a,
+        const B: usize,
+        const C: usize,
+        const L: usize,
+        const BLW: usize,
+        const MLW: usize,
+    >(
+        &'a self,
+        road: &'a Road<B, C, L, BLW, MLW>,
+        self_id: &'a usize,
+    ) -> impl Iterator<Item = RectangleOccupier> + '_ {
+        return self
+            .y_j_t_plus_1()
+            // Step 1: check the availability of possible lateral positions
+            .map(|position| RectangleOccupier {
+                front: self.front,
+                right: position,
+                width: self.width,
+                length: self.length,
+            })
+            // check that the occupation is on the road
+            .filter(|occupation| road.road_contains_occupier(occupation))
+            .filter(|occupation| !road.is_collision_for(occupation, Vehicle::Bike(*self_id)));
+        // .filter(|potential_occupation| {
+        //     road.collisions_for(potential_occupation)
+        //         .into_iter()
+        //         // only a collision if the found vehicle is not this bike
+        //         .any(|found_vehicle| match found_vehicle {
+        //             Vehicle::Bike(found_bike_id) => *found_bike_id == *self_id,
+        //             Vehicle::Car(_) => false,
+        //         })
+        // });
     }
 
     fn y_star_cmp_priority<
@@ -242,7 +252,97 @@ mod tests {
 
     use rand::distributions::Bernoulli;
 
-    use crate::{bike::Bike, road::Road};
+    use crate::{
+        bike::Bike,
+        road::{RectangleOccupier, Road, Vehicle},
+    };
+
+    #[test]
+    fn bike_can_move_laterally() {
+        let bike = Bike {
+            front: 3,
+            right: 3,
+            length: 2,
+            width: 2,
+            forward_speed_max: 5,
+            forward_speed: 0,
+            forward_acceleration: 1,
+            rightward_speed_max: 2,
+            rightward_speed: 0,
+            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
+        };
+
+        let lateral_options: Vec<isize> = bike.potential_lateral_positions().collect();
+
+        assert!(!lateral_options.is_empty())
+    }
+
+    #[test]
+    fn bike_has_y_prime_empty_road() {
+        let bikes = [Bike {
+            front: 3,
+            right: 3,
+            length: 2,
+            width: 2,
+            forward_speed_max: 5,
+            forward_speed: 0,
+            forward_acceleration: 1,
+            rightward_speed_max: 2,
+            rightward_speed: 0,
+            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
+        }];
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+        let bike_id = 0;
+
+        let y_prime_j_t_plus_1: Vec<RectangleOccupier> = road
+            .get_bike(bike_id)
+            .y_prime_j_t_plus_1(&road, &bike_id)
+            .collect();
+
+        assert!(!y_prime_j_t_plus_1.is_empty());
+    }
+
+    #[test]
+    fn bike_has_no_collisions_empty_road() {
+        let bikes = [Bike {
+            front: 3,
+            right: 3,
+            length: 2,
+            width: 2,
+            forward_speed_max: 5,
+            forward_speed: 0,
+            forward_acceleration: 1,
+            rightward_speed_max: 2,
+            rightward_speed: 0,
+            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
+        }];
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let bike = road.get_bike(0);
+
+        let bike_collides = road.is_collision_for(&bike.rectangle_occupation(), Vehicle::Bike(0));
+
+        assert!(!bike_collides);
+    }
+
+    #[test]
+    fn bike_is_on_road() {
+        let bikes = [Bike {
+            front: 3,
+            right: 3,
+            length: 2,
+            width: 2,
+            forward_speed_max: 5,
+            forward_speed: 0,
+            forward_acceleration: 1,
+            rightward_speed_max: 2,
+            rightward_speed: 0,
+            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
+        }];
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        assert!(road.road_contains_occupier(road.get_bike(0)));
+    }
 
     #[test]
     fn bike_prefers_bl_empty_road() {

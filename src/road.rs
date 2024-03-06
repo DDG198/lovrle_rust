@@ -197,6 +197,13 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .collect();
     }
 
+    pub fn is_collision_for(&self, occupier: &impl RoadOccupier, vehicle: Vehicle) -> bool {
+        return self
+            .collisions_for(occupier)
+            .into_iter()
+            .any(|found_vehicle| *found_vehicle != vehicle);
+    }
+
     fn bike_lane_contains_occupier(&self, occupier: &impl RoadOccupier) -> bool {
         occupier.occupier_is_within(MLW as isize)
         // // old implementation, can be tested against
@@ -215,6 +222,12 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         //     .into_iter()
         //     .map(|(x, y)| x)
         //     .any(|x| x >= MLW as isize)
+    }
+
+    pub fn road_contains_occupier(&self, occupier: &impl RoadOccupier) -> bool {
+        occupier
+            .occupied_cells()
+            .all(|(x, _)| 0 <= x && x < Road::<B, C, L, BLW, MLW>::total_width())
     }
 
     fn vehicle_collides(&self, vehicle: Vehicle) -> bool {
