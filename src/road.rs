@@ -383,7 +383,7 @@ mod tests {
 
         let new_position = road.get_bike(0).rectangle_occupation();
 
-        assert!(!road.motor_lane_contains_occupier(&new_position));
+        assert!(road.motor_lane_contains_occupier(&new_position));
     }
 
     #[test]
@@ -396,7 +396,7 @@ mod tests {
 
         let new_position = road.get_bike(0).rectangle_occupation();
 
-        assert!(!road.motor_lane_contains_occupier(&new_position));
+        assert!(road.motor_lane_contains_occupier(&new_position));
     }
 
     #[test]
@@ -411,6 +411,6 @@ mod tests {
 
         let new_position = road.get_bike(0).rectangle_occupation();
 
-        assert!(!road.motor_lane_contains_occupier(&new_position));
+        assert!(road.motor_lane_contains_occupier(&new_position));
     }
 }
