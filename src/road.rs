@@ -297,66 +297,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .try_into()
             .expect("array length should be okay due to const generic B");
         todo!()
-        // let bikes: [Bike; B] = (0usize..B)
-        //     .map(|bike_id| self.bike_lateral_update(bike_id))
-        //     .collect::<Vec<Bike>>()
-        //     .try_into()
-        //     .expect("array length should be okay due to const generic B");
-        // todo!()
     }
-
-    // fn bike_lateral_update(&self, bike_id: usize) -> Bike {
-    //     let bike = self.bikes.get(bike_id).expect("bike_id should be valid");
-    //     let potential_positions = bike
-    //         // Y'_j,t+1
-    //         .potential_lateral_positions()
-    //         .into_iter()
-    //         // if the rhs of the bike is off the side, it will not be valid
-    //         .filter(|x| *x < Self::total_width())
-    //         // Step 1: check the availability of possible lateral positions
-    //         .map(|position| RectangleOccupier {
-    //             front: bike.front,
-    //             right: position,
-    //             width: bike.width,
-    //             length: bike.length,
-    //         })
-    //         // if the lhs of the bike is off the side, it will not be valid
-    //         .filter(|potential_occupation| 0 <= potential_occupation.left())
-    //         .filter(|potential_occupation| {
-    //             self.collisions_for(potential_occupation)
-    //                 .into_iter()
-    //                 // only a collision if the found vehicle is not one moving
-    //                 .any(|found_vehicle| match found_vehicle {
-    //                     Vehicle::Bike(found_bike_id) => *found_bike_id != bike_id,
-    //                     Vehicle::Car(_) => true,
-    //                 })
-    //         })
-    //         // Step 2: check safety criterion
-    //         .filter(|potential_occupation| {
-    //             match self.motor_lane_contains_occupier(potential_occupation) {
-    //                 // find whether the next car back is within a safe distance
-    //                 // two ways of doing this:
-    //                 // 1. store all dangerous cells at iteration time and check
-    //                 //   - efficiency will depend on how well space can be
-    //                 //     allocated for the hashmap
-    //                 // 2. find the next car back at each iteration and check speed
-    //                 //   - decided to go with this one for now
-    //                 true => self
-    //                     .cells
-    //                     .first_car_back(
-    //                         &(potential_occupation.left(), potential_occupation.back()),
-    //                         None, // potential optimisation: set reasonable max
-    //                     )
-    //                     .is_some_and(|car_id| {
-    //                         let car = self.cars.get(*car_id).expect("car_id should be valid");
-    //                         let distance = car.front() - potential_occupation.back();
-    //                         return car.next_iteration_potential_speed() < distance;
-    //                     }),
-    //                 // occupations entirely on the bike lane are safe
-    //                 false => true,
-    //             }
-    //         });
-    // }
 
     fn bikes_forward_update(&self) {
         todo!()
