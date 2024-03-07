@@ -3,6 +3,7 @@ use std::{
     iter::{repeat, zip},
 };
 
+use anyhow::{anyhow, Result};
 use rand::{distributions::Bernoulli, prelude::Distribution};
 
 use crate::road::{RectangleOccupier, Road, RoadOccupier, Vehicle};
@@ -199,7 +200,7 @@ impl Bike {
         )
     }
 
-    const fn rectangle_occupation(&self) -> RectangleOccupier {
+    pub const fn rectangle_occupation(&self) -> RectangleOccupier {
         return RectangleOccupier {
             front: self.front,
             right: self.right,
@@ -244,6 +245,152 @@ impl RoadOccupier for Bike {
         return (self.right..(self.right + self.width))
             .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
             .flatten();
+    }
+}
+
+pub struct BikeBuilder {
+    front: isize,
+    right: isize,
+    length: isize,
+    width: isize,
+    forward_speed_max: isize,
+    forward_speed: isize,
+    forward_acceleration: isize,
+    rightward_speed_max: isize,
+    lateral_ignorance: f64,
+}
+
+impl BikeBuilder {
+    pub const fn with_front_at(&self, front: isize) -> Self {
+        return Self { front, ..*self };
+    }
+
+    pub const fn with_right_at(&self, right: isize) -> Self {
+        return Self { right, ..*self };
+    }
+
+    pub const fn with_front_right_at(&self, front_right: (isize, isize)) -> Self {
+        let (front, right) = front_right;
+        return self.with_front_at(front).with_right_at(right);
+    }
+
+    pub fn with_length(&self, length: isize) -> Result<Self> {
+        return match length < 1 {
+            true => Err(anyhow!(
+                "length must be strictly positive, instead {}",
+                length
+            )),
+            false => Ok(Self { length, ..*self }),
+        };
+    }
+
+    pub fn with_width(&self, width: isize) -> Result<Self> {
+        return match width < 1 {
+            true => Err(anyhow!(
+                "width must be strictly positive, instead {}",
+                width
+            )),
+            false => Ok(Self { width, ..*self }),
+        };
+    }
+
+    pub fn with_dimensions(&self, dimensions: (isize, isize)) -> Result<Self> {
+        let (width, length) = dimensions;
+        return Ok(self.with_width(width)?.with_length(length)?);
+    }
+
+    pub fn with_forward_max_speed(&self, forward_speed_max: isize) -> Result<Self> {
+        return match forward_speed_max.is_negative() {
+            true => Err(anyhow!(
+                "cannot have negative max speed, instead {}",
+                forward_speed_max
+            )),
+            false => Ok(Self {
+                forward_speed_max,
+                ..*self
+            }),
+        };
+    }
+
+    pub fn with_forward_speed(&self, forward_speed: isize) -> Result<Self> {
+        return match forward_speed.is_negative() {
+            true => Err(anyhow!(
+                "cannot have negative speed, instead {}",
+                forward_speed
+            )),
+            false => Ok(Self {
+                forward_speed,
+                ..*self
+            }),
+        };
+    }
+
+    pub fn with_forward_acceleration(&self, forward_acceleration: isize) -> Result<Self> {
+        return match forward_acceleration < 1 {
+            true => Err(anyhow!(
+                "forward acceleration must be strictly positive, instead {}",
+                forward_acceleration
+            )),
+            false => Ok(Self {
+                forward_acceleration,
+                ..*self
+            }),
+        };
+    }
+
+    pub fn with_lateral_ignorance(&self, lateral_ignorance: f64) -> Result<Self> {
+        return match lateral_ignorance <= 0.0 && 1.0 <= lateral_ignorance {
+            true => Err(anyhow!(
+                "lateral ignorance must be between 0 and 1, instead {}",
+                lateral_ignorance
+            )),
+            false => Ok(Self {
+                lateral_ignorance,
+                ..*self
+            }),
+        };
+    }
+}
+
+impl Default for BikeBuilder {
+    fn default() -> Self {
+        Self {
+            front: 2,
+            right: 2,
+            length: 2,
+            width: 2,
+            forward_speed_max: 6,
+            forward_speed: 0,
+            forward_acceleration: 1,
+            rightward_speed_max: 2,
+            lateral_ignorance: 0.2,
+        }
+    }
+}
+
+impl TryInto<Bike> for BikeBuilder {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<Bike> {
+        return match self.forward_speed_max < self.forward_speed {
+            true => Err(anyhow!(
+                "forward speed ({}) cannot be greater than max ({})",
+                self.forward_speed_max,
+                self.forward_speed
+            )),
+            false => Ok(Bike {
+                front: self.front,
+                right: self.right,
+                length: self.length,
+                width: self.width,
+                forward_speed_max: self.forward_speed_max,
+                forward_speed: self.forward_speed,
+                forward_acceleration: self.forward_acceleration,
+                rightward_speed_max: self.rightward_speed_max,
+                rightward_speed: 0,
+                ignore_lateral_distribution: Bernoulli::new(self.lateral_ignorance)?,
+            }),
+        };
     }
 }
 

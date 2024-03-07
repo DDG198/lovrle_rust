@@ -370,3 +370,47 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{bike::BikeBuilder, road::Road};
+
+    #[test]
+    fn bike_is_on_road() {
+        let bikes = [BikeBuilder::default().with_lateral_ignorance(0.0).unwrap()]
+            .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(!road.motor_lane_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn bike_is_on_road_after_update() {
+        let bikes = [BikeBuilder::default().with_lateral_ignorance(0.0).unwrap()]
+            .map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        road.update();
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(!road.motor_lane_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn multiple_updates_work() {
+        let bikes = [BikeBuilder::default().with_lateral_ignorance(0.0).unwrap()]
+            .map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        for _ in 0..1000 {
+            road.update();
+        }
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(!road.motor_lane_contains_occupier(&new_position));
+    }
+}
