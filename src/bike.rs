@@ -270,8 +270,11 @@ impl BikeBuilder {
         return Self { right, ..*self };
     }
 
-    pub const fn with_front_right_at(&self, front_right: (isize, isize)) -> Self {
-        let (front, right) = front_right;
+    pub const fn with_front_right_at(&self, front_right: Coord) -> Self {
+        let Coord {
+            lat: right,
+            long: front,
+        } = front_right;
         return self.with_front_at(front).with_right_at(right);
     }
 

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     iter::{repeat, zip},
+    ops::{Range, RangeInclusive},
 };
 
 use anyhow::{anyhow, Result};
@@ -31,7 +32,7 @@ pub trait RoadOccupier {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 // every occupier is a rectangular occupier so it may make sense
 // to do away with the abstraction and just have Bikes and Cars
 // contain RectangleOccupiers to track their position and size
@@ -44,8 +45,9 @@ pub struct RectangleOccupier {
 
 impl RoadOccupier for RectangleOccupier {
     fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
-        return (self.right..(self.right + self.width))
-            .map(|lat| zip(repeat(lat), (self.front - self.length)..(self.front)))
+        return self
+            .width_iterator()
+            .map(|lat| zip(repeat(lat), self.length_iterator()))
             .flatten()
             .map(|(lat, long)| Coord { lat, long });
     }
@@ -55,11 +57,11 @@ impl RoadOccupier for RectangleOccupier {
 
 impl RectangleOccupier {
     pub const fn left(&self) -> isize {
-        return self.right - self.width;
+        return self.right - self.width + 1;
     }
 
     pub const fn back(&self) -> isize {
-        return self.front - self.length;
+        return self.front - self.length + 1;
     }
 
     pub const fn back_left(&self) -> Coord {
@@ -67,6 +69,19 @@ impl RectangleOccupier {
             lat: self.left(),
             long: self.back(),
         };
+    }
+
+    pub fn front_cells(&self) -> impl Iterator<Item = Coord> {
+        return zip(self.width_iterator(), repeat(self.front))
+            .map(|(lat, long)| Coord { lat, long });
+    }
+
+    pub const fn length_iterator(&self) -> RangeInclusive<isize> {
+        return self.back()..=self.front;
+    }
+
+    pub const fn width_iterator(&self) -> RangeInclusive<isize> {
+        return self.left()..=self.front;
     }
 }
 
@@ -131,6 +146,33 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
                 Vehicle::Bike(_) => None,
                 Vehicle::Car(found_car_id) => Some(found_car_id),
             });
+    }
+
+    fn front_gap(&self, coord: &Coord, maybe_max: Option<usize>) -> Option<isize> {
+        let Coord {
+            lat: start_lat,
+            long: start_long,
+        } = *coord;
+        let max_search = match maybe_max {
+            Some(set_max) => set_max,
+            None => L,
+        };
+
+        let ahead_coord = (1isize..max_search as isize)
+            .map(|d_long| {
+                Self::validate_coord(Coord {
+                    lat: start_lat,
+                    long: start_long + d_long,
+                })
+                .expect("lat should be in range")
+            })
+            .find(|coord| self.get(&coord).is_some());
+
+        return ahead_coord.map(
+            |Coord {
+                 long: found_long, ..
+             }| found_long - start_long,
+        );
     }
 }
 
@@ -306,7 +348,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     fn bikes_lateral_update(&self) {
-        let _new_bikes: [Bike; B] = self
+        let new_bikes: [Bike; B] = self
             .bikes
             .iter()
             .enumerate()
@@ -325,14 +367,22 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         todo!()
     }
 
-    pub fn front_gap(&self, occupation: &RectangleOccupier) -> usize {
-        todo!()
+    pub fn front_gap(&self, occupation: &RectangleOccupier) -> Option<isize> {
+        occupation
+            .front_cells()
+            .filter_map(|coord| self.cells.front_gap(&coord, None))
+            .min()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{bike::BikeBuilder, road::Road};
+    use proptest::proptest;
+
+    use crate::{
+        bike::BikeBuilder,
+        road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle},
+    };
 
     #[test]
     fn bike_is_on_road() {
@@ -371,5 +421,237 @@ mod tests {
         let new_position = road.get_bike(0).rectangle_occupation();
 
         assert!(road.motor_lane_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn rectangle_front_cells_correct() {
+        let occupation = RectangleOccupier {
+            front: 2,
+            right: 5,
+            width: 3,
+            length: 3,
+        };
+
+        let front: Vec<Coord> = occupation.front_cells().collect();
+
+        assert_eq!(
+            front,
+            vec![
+                Coord { lat: 3, long: 2 },
+                Coord { lat: 4, long: 2 },
+                Coord { lat: 5, long: 2 }
+            ]
+        )
+    }
+
+    #[test]
+    fn rectangle_occupies_cells_correct() {
+        let width = 2;
+        let length = 2;
+        let area = (width * length) as usize;
+        let occupation = RectangleOccupier {
+            front: 2,
+            right: 5,
+            width,
+            length,
+        };
+
+        let cells: Vec<Coord> = occupation.occupied_cells().collect();
+
+        println!("occupier: {:?}", occupation);
+
+        assert_eq!(occupation.occupied_cells().count(), area);
+        assert_eq!(cells.len(), area);
+        assert_eq!(
+            cells,
+            vec![
+                Coord { lat: 4, long: 1 },
+                Coord { lat: 5, long: 1 },
+                Coord { lat: 4, long: 2 },
+                Coord { lat: 5, long: 2 }
+            ]
+        );
+    }
+
+    #[test]
+    fn front_gap_works() {
+        let bikes = [
+            BikeBuilder::default().with_front_right_at(Coord { lat: 3, long: 3 }),
+            BikeBuilder::default().with_front_right_at(Coord { lat: 3, long: 10 }),
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<2, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let trailing_bike = road.get_bike(0);
+
+        let front_gap = road
+            .front_gap(&trailing_bike.rectangle_occupation())
+            .unwrap();
+
+        assert_eq!(front_gap, 5);
+    }
+
+    #[test]
+    fn cells_front_gap_works() {
+        /*
+        0 1 2 3 4 5 6 7 8 9 10
+              t             l
+            x x           x x
+                - - - - >
+        length 5
+        */
+        let trailing_coord = Coord { lat: 3, long: 3 };
+        let leading_coord = Coord { lat: 3, long: 10 };
+        let dimensions = (2, 2);
+        let bikes = [
+            BikeBuilder::default()
+                .with_dimensions(dimensions)
+                .unwrap()
+                .with_front_right_at(trailing_coord),
+            BikeBuilder::default()
+                .with_dimensions(dimensions)
+                .unwrap()
+                .with_front_right_at(leading_coord),
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<2, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let front_gap = road.cells.front_gap(&trailing_coord, None).unwrap();
+
+        assert_eq!(front_gap, 5);
+    }
+
+    #[test]
+    fn bike_is_where_expected() {
+        /*
+        0 1 2 3 4 5 6 7 8 9 10
+              t             l
+            x x           x x
+                - - - - >
+        length 5
+        */
+        let coord = Coord { lat: 3, long: 10 };
+        let dimensions = (2, 2);
+        let bikes = [BikeBuilder::default()
+            .with_dimensions(dimensions)
+            .unwrap()
+            .with_front_right_at(coord)]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let bike = road.get_bike(0);
+        let occupied_coords: Vec<Coord> = bike.rectangle_occupation().occupied_cells().collect();
+
+        println!("occupation: {:?}", bike.rectangle_occupation());
+        println!("occupied coords: {:?}", occupied_coords);
+        println!("length: {}", occupied_coords.len());
+
+        let found_vehicle = road.cells.get(&coord).unwrap();
+
+        assert_eq!(*found_vehicle, Vehicle::Bike(0));
+    }
+
+    #[test]
+    fn rectangle_occupies_cells_correct_size_larger() {
+        let width = 3;
+        let length = 4;
+        let area = (width * length) as usize;
+        let occupier = RectangleOccupier {
+            front: 2,
+            right: 5,
+            width,
+            length,
+        };
+        println!("occupier: {:?}", occupier);
+
+        assert_eq!(occupier.occupied_cells().count(), area);
+    }
+
+    #[test]
+    fn rectangle_occupier_correct_size() {
+        let width = 2;
+        let length = 2;
+        let area = width * length;
+        let occupier = RectangleOccupier {
+            front: 2,
+            right: 2,
+            width,
+            length,
+        };
+
+        assert_eq!(occupier.occupied_cells().count(), area as usize)
+    }
+
+    proptest!(
+        #[test]
+        fn rectangle_occupier_correct_size_proptest(
+            width in 0isize..,
+            length in 0isize..,
+            front: isize,
+            right: isize,
+        ) {
+            let area = (width * length) as usize;
+            let occupier = RectangleOccupier {
+                front,
+                right,
+                width,
+                length,
+            };
+
+            println!("occupier: {:?}", occupier);
+            assert_eq!(occupier.occupied_cells().count(), area)
+        }
+
+        #[test]
+        fn rectangle_occupier_correct_width_proptest(
+            width in 0isize..,
+            length: isize,
+            front: isize,
+            right: isize,
+        ) {
+
+        }
+    );
+
+    #[test]
+    fn rectangle_occupier_correct_size_v2() {
+        let width = 2;
+        let length = 2;
+        let area = (width * length) as usize;
+        let occupier = RectangleOccupier {
+            front: 2,
+            right: 2,
+            width,
+            length,
+        };
+
+        println!("occupier: {:?}", occupier);
+        assert_eq!(occupier.occupied_cells().count(), area)
+    }
+
+    #[test]
+    fn rectangle_width_correct() {
+        let width = 2;
+        let occupier = RectangleOccupier {
+            front: 2,
+            right: 2,
+            width,
+            length: 2,
+        };
+
+        assert_eq!(occupier.width_iterator().count(), width as usize)
+    }
+
+    #[test]
+    fn rectangle_length_correct() {
+        let length = 2;
+        let occupier = RectangleOccupier {
+            front: 2,
+            right: 2,
+            width: 2,
+            length,
+        };
+
+        assert_eq!(occupier.length_iterator().count(), length as usize)
     }
 }
