@@ -13,15 +13,21 @@ pub enum Vehicle {
     Car(usize),
 }
 
+#[derive(Eq, PartialEq, Hash, Debug, Copy, Clone)]
+pub struct Coord {
+    pub lat: isize,
+    pub long: isize,
+}
+
 pub trait RoadOccupier {
-    fn occupied_cells(&self) -> impl Iterator<Item = (isize, isize)>;
+    fn occupied_cells(&self) -> impl Iterator<Item = Coord>;
 
     fn occupier_is_within(&self, width: isize) -> bool {
-        return self.occupied_cells().into_iter().any(|(x, _)| width < x);
+        return self.occupied_cells().any(|Coord { lat, .. }| width < lat);
     }
 
     fn occupier_is_without(&self, width: isize) -> bool {
-        return self.occupied_cells().into_iter().any(|(x, _)| x <= width);
+        return self.occupied_cells().any(|Coord { lat, .. }| lat <= width);
     }
 }
 
@@ -37,10 +43,11 @@ pub struct RectangleOccupier {
 }
 
 impl RoadOccupier for RectangleOccupier {
-    fn occupied_cells(&self) -> impl Iterator<Item = (isize, isize)> {
+    fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
         return (self.right..(self.right + self.width))
-            .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
-            .flatten();
+            .map(|lat| zip(repeat(lat), (self.front - self.length)..(self.front)))
+            .flatten()
+            .map(|(lat, long)| Coord { lat, long });
     }
 
     // Optimisation: can customise the occupier is within and out implementations
@@ -55,8 +62,11 @@ impl RectangleOccupier {
         return self.front - self.length;
     }
 
-    pub const fn back_left(&self) -> (isize, isize) {
-        return (self.back(), self.left());
+    pub const fn back_left(&self) -> Coord {
+        return Coord {
+            lat: self.left(),
+            long: self.back(),
+        };
     }
 }
 
@@ -65,7 +75,7 @@ const CAR_ALLOCATION: usize = 12;
 const BIKE_ALLOCATION: usize = 4;
 
 pub struct RoadCells<const L: usize, const BLW: usize, const MLW: usize> {
-    cells: HashMap<(isize, isize), Vehicle>,
+    cells: HashMap<Coord, Vehicle>,
 }
 
 impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> {
@@ -75,27 +85,34 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         }
     }
 
-    fn validate_coord(x: isize, y: isize) -> Result<(isize, isize)> {
-        match y < Self::total_width() {
-            true => Ok((x.rem_euclid(L as isize), y)),
+    fn validate_coord(coord: Coord) -> Result<Coord> {
+        let Coord { lat, long } = coord;
+        return match lat < Self::total_width() {
+            true => Ok(Coord {
+                lat,
+                long: long.rem_euclid(L as isize),
+            }),
             false => Err(anyhow!(
-                "y value {} exceeded total road width {}",
-                y,
+                "lat value {} exceeded total road width {}",
+                lat,
                 Self::total_width()
             )),
-        }
+        };
     }
 
     const fn total_width() -> isize {
         return (BLW + MLW) as isize;
     }
 
-    fn get(&self, coord: &(isize, isize)) -> Option<&Vehicle> {
+    fn get(&self, coord: &Coord) -> Option<&Vehicle> {
         self.cells.get(coord)
     }
 
-    fn first_car_back(&self, coord: &(isize, isize), maybe_max: Option<usize>) -> Option<&usize> {
-        let (start_x, start_y) = coord;
+    fn first_car_back(&self, coord: &Coord, maybe_max: Option<usize>) -> Option<&usize> {
+        let Coord {
+            lat: start_lat,
+            long: start_long,
+        } = coord;
         // could optimise by keeping track speed of the fastest travelling car,
         // and using that as the max_search distance.
         let max_search = match maybe_max {
@@ -104,7 +121,11 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         };
 
         return (1isize..max_search)
-            .map(|dy| Self::validate_coord(*start_x, start_y - dy).expect("x should be in range"))
+            .map(|d_long| Coord {
+                lat: *start_lat,
+                long: start_long - d_long,
+            })
+            .map(|coord| Self::validate_coord(coord).expect("lat should be in range"))
             .filter_map(|coord| self.get(&coord))
             .find_map(|found_vehicle| match found_vehicle {
                 Vehicle::Bike(_) => None,
@@ -165,7 +186,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         RoadCells::<L, BLW, MLW>::total_width()
     }
 
-    pub fn iter_car_positions(&self) -> impl Iterator<Item = ((isize, isize), Vehicle)> + '_ {
+    pub fn iter_car_positions(&self) -> impl Iterator<Item = (Coord, Vehicle)> + '_ {
         return self
             .cars
             .iter()
@@ -177,7 +198,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .map(|(cell, car_id)| (cell, Vehicle::Car(car_id)));
     }
 
-    pub fn iter_bike_positions(&self) -> impl Iterator<Item = ((isize, isize), Vehicle)> + '_ {
+    pub fn iter_bike_positions(&self) -> impl Iterator<Item = (Coord, Vehicle)> + '_ {
         return self
             .bikes
             .iter()
@@ -191,8 +212,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     pub fn collisions_for(&self, occupier: &impl RoadOccupier) -> Vec<&Vehicle> {
         return occupier
             .occupied_cells()
-            .into_iter()
-            .map(|(x, y)| RoadCells::<L, BLW, MLW>::validate_coord(x, y).unwrap())
+            .map(|coord| RoadCells::<L, BLW, MLW>::validate_coord(coord).unwrap())
             .filter_map(|coord| self.cells.get(&coord))
             .collect();
     }
@@ -227,30 +247,28 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     pub fn road_contains_occupier(&self, occupier: &impl RoadOccupier) -> bool {
         occupier
             .occupied_cells()
-            .all(|(x, _)| 0 <= x && x < Road::<B, C, L, BLW, MLW>::total_width())
+            .all(|Coord { lat, .. }| 0 <= lat && lat < Road::<B, C, L, BLW, MLW>::total_width())
     }
 
     fn vehicle_collides(&self, vehicle: Vehicle) -> bool {
-        let occupied_cells: Vec<(isize, isize)> = match vehicle {
+        let occupied_cells: Vec<Coord> = match vehicle {
             Vehicle::Bike(bike_id) => self
                 .bikes
                 .get(bike_id)
                 .expect("bike_id should be valid")
                 .occupied_cells()
-                .into_iter()
                 .collect(),
             Vehicle::Car(car_id) => self
                 .cars
                 .get(car_id)
                 .expect("car_id should be valid")
                 .occupied_cells()
-                .into_iter()
                 .collect(),
         };
 
         return occupied_cells
             .into_iter()
-            .map(|(x, y)| RoadCells::<L, BLW, MLW>::validate_coord(x, y).unwrap())
+            .map(|coord| RoadCells::<L, BLW, MLW>::validate_coord(coord).unwrap())
             .filter_map(|coord| self.cells.get(&coord))
             .any(|found_vehicle| *found_vehicle != vehicle);
     }
@@ -263,20 +281,20 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         return self.bikes.get(bike_id).unwrap();
     }
 
-    pub fn first_car_back(&self, coord: &(isize, isize), maybe_max: Option<usize>) -> Option<&Car> {
+    pub fn first_car_back(&self, coord: &Coord, maybe_max: Option<usize>) -> Option<&Car> {
         return match self.cells.first_car_back(coord, maybe_max) {
             Some(car_id) => Some(self.get_car(*car_id)),
             None => None,
         };
     }
 
-    pub fn is_blocking(&self, coord: &(isize, isize), maybe_max: Option<usize>) -> bool {
+    pub fn is_blocking(&self, coord: &Coord, maybe_max: Option<usize>) -> bool {
         return self
             .first_car_back(
                 coord, None, // potential optimisation: set reasonable max
             )
             .is_some_and(|car| {
-                let distance = car.front() - coord.1;
+                let distance = car.front() - coord.long;
                 return car.next_iteration_potential_speed() < distance;
             });
     }

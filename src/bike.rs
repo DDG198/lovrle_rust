@@ -6,7 +6,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use rand::{distributions::Bernoulli, prelude::Distribution};
 
-use crate::road::{RectangleOccupier, Road, RoadOccupier, Vehicle};
+use crate::road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle};
 
 #[derive(Debug)]
 pub struct Bike {
@@ -241,10 +241,11 @@ fn select_y_star<
 }
 
 impl RoadOccupier for Bike {
-    fn occupied_cells(&self) -> impl Iterator<Item = (isize, isize)> {
+    fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
         return (self.right..(self.right + self.width))
             .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
-            .flatten();
+            .flatten()
+            .map(|(lat, long)| Coord { lat, long });
     }
 }
 

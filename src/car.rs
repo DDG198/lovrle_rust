@@ -3,7 +3,7 @@ use std::{
     iter::{repeat, zip},
 };
 
-use crate::road::RoadOccupier;
+use crate::road::{Coord, RoadOccupier};
 
 pub struct Car {
     front: isize,
@@ -17,10 +17,11 @@ pub struct Car {
 }
 
 impl RoadOccupier for Car {
-    fn occupied_cells(&self) -> impl Iterator<Item = (isize, isize)> {
+    fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
         return (0isize..self.lateral_occupancy())
-            .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
-            .flatten();
+            .map(|lat| zip(repeat(lat), (self.front - self.length)..(self.front)))
+            .flatten()
+            .map(|(lat, long)| Coord { lat, long });
     }
 }
 
