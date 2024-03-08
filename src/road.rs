@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     iter::{repeat, zip},
-    ops::{Range, RangeInclusive},
+    ops::RangeInclusive,
 };
 
 use anyhow::{anyhow, Result};
@@ -39,8 +39,8 @@ pub trait RoadOccupier {
 pub struct RectangleOccupier {
     pub front: isize,
     pub right: isize,
-    pub width: isize,
-    pub length: isize,
+    pub width: usize,
+    pub length: usize,
 }
 
 impl RoadOccupier for RectangleOccupier {
@@ -57,11 +57,11 @@ impl RoadOccupier for RectangleOccupier {
 
 impl RectangleOccupier {
     pub const fn left(&self) -> isize {
-        return self.right - self.width + 1;
+        return (self.right + 1).saturating_sub_unsigned(self.width);
     }
 
     pub const fn back(&self) -> isize {
-        return self.front - self.length + 1;
+        return (self.front + 1).saturating_sub_unsigned(self.length);
     }
 
     pub const fn back_left(&self) -> Coord {
@@ -584,32 +584,15 @@ mod tests {
 
     proptest!(
         #[test]
-        fn rectangle_occupier_correct_size_proptest(
-            width in 0isize..,
-            length in 0isize..,
-            front: isize,
-            right: isize,
-        ) {
-            let area = (width * length) as usize;
-            let occupier = RectangleOccupier {
-                front,
-                right,
-                width,
-                length,
-            };
-
+        fn rectangle_occupier_correct_size_proptest(occupier: RectangleOccupier) {
+            let area = occupier.width * occupier.length;
             println!("occupier: {:?}", occupier);
             assert_eq!(occupier.occupied_cells().count(), area)
         }
 
         #[test]
-        fn rectangle_occupier_correct_width_proptest(
-            width in 0isize..,
-            length: isize,
-            front: isize,
-            right: isize,
-        ) {
-
+        fn rectangle_occupier_correct_width_proptest(occupier: RectangleOccupier) {
+            assert_eq!(occupier.width_iterator().count(), occupier.width)
         }
     );
 

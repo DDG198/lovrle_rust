@@ -10,10 +10,7 @@ use crate::road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle};
 
 #[derive(Debug)]
 pub struct Bike {
-    front: isize,
-    right: isize,
-    length: isize,
-    width: isize,
+    occupation: RectangleOccupier,
     forward_speed_max: isize,
     forward_speed: isize,
     forward_acceleration: isize,
@@ -24,11 +21,11 @@ pub struct Bike {
 
 impl Bike {
     const fn left(&self) -> isize {
-        return self.right - self.width;
+        return self.occupation.left();
     }
 
     const fn back(&self) -> isize {
-        return self.front - self.length;
+        return self.occupation.back();
     }
     /// Returns the positions that the bike could move to laterally
     pub const fn potential_lateral_positions(&self) -> impl Iterator<Item = isize> {
@@ -37,7 +34,8 @@ impl Bike {
         // Could also put a similar check in for the right side? but
         // that would require knowledge of the road width.
         // Leave this as an optimisation for the future.
-        return self.right - self.rightward_speed_max..self.right + self.rightward_speed_max;
+        return self.occupation.right - self.rightward_speed_max
+            ..self.occupation.right + self.rightward_speed_max;
     }
 
     fn should_ignore_lateral_movement(&self) -> bool {
@@ -113,8 +111,12 @@ impl Bike {
         // select Y'' with the furthest front gap
         debug_assert!(!y_prime_prime_j_t_plus_1.is_empty());
         let selected_occupation = select_y_star(y_prime_prime_j_t_plus_1, road);
-        Self {
+        let occupation = RectangleOccupier {
             right: selected_occupation.right,
+            ..self.occupation
+        };
+        Self {
+            occupation,
             ..*self
         }
     }
@@ -135,10 +137,8 @@ impl Bike {
             .y_j_t_plus_1()
             // Step 1: check the availability of possible lateral positions
             .map(|position| RectangleOccupier {
-                front: self.front,
                 right: position,
-                width: self.width,
-                length: self.length,
+                ..self.occupation
             })
             // check that the occupation is on the road
             .filter(|occupation| road.road_contains_occupier(occupation))
@@ -201,12 +201,7 @@ impl Bike {
     }
 
     pub const fn rectangle_occupation(&self) -> RectangleOccupier {
-        return RectangleOccupier {
-            front: self.front,
-            right: self.right,
-            width: self.width,
-            length: self.length,
-        };
+        return self.occupation;
     }
 }
 
@@ -242,10 +237,7 @@ fn select_y_star<
 
 impl RoadOccupier for Bike {
     fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
-        return (self.right..(self.right + self.width))
-            .map(|x| zip(repeat(x), (self.front - self.length)..(self.front)))
-            .flatten()
-            .map(|(lat, long)| Coord { lat, long });
+        return self.occupation.occupied_cells();
     }
 }
 
@@ -354,6 +346,10 @@ impl BikeBuilder {
             }),
         };
     }
+
+    fn build(&self) -> Result<Bike> {
+        return self.try_into();
+    }
 }
 
 impl Default for BikeBuilder {
@@ -372,7 +368,7 @@ impl Default for BikeBuilder {
     }
 }
 
-impl TryInto<Bike> for BikeBuilder {
+impl TryInto<Bike> for &BikeBuilder {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<Bike> {
@@ -383,10 +379,12 @@ impl TryInto<Bike> for BikeBuilder {
                 self.forward_speed
             )),
             false => Ok(Bike {
-                front: self.front,
-                right: self.right,
-                length: self.length,
-                width: self.width,
+                occupation: RectangleOccupier {
+                    front: self.front,
+                    right: self.right,
+                    length: self.length.try_into()?,
+                    width: self.width.try_into()?,
+                },
                 forward_speed_max: self.forward_speed_max,
                 forward_speed: self.forward_speed,
                 forward_acceleration: self.forward_acceleration,
@@ -398,19 +396,25 @@ impl TryInto<Bike> for BikeBuilder {
     }
 }
 
+impl TryInto<Bike> for BikeBuilder {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<Bike> {
+        return (&self).try_into();
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use rand::distributions::Bernoulli;
-
     use crate::{
-        bike::Bike,
+        bike::{Bike, BikeBuilder},
         road::{RectangleOccupier, Road, Vehicle},
     };
 
     #[test]
     fn bike_can_move_laterally() {
-        let bike = Bike {
+        let bike: Bike = BikeBuilder {
             front: 3,
             right: 3,
             length: 2,
@@ -419,9 +423,10 @@ mod tests {
             forward_speed: 0,
             forward_acceleration: 1,
             rightward_speed_max: 2,
-            rightward_speed: 0,
-            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
-        };
+            lateral_ignorance: 0.0,
+        }
+        .build()
+        .unwrap();
 
         let lateral_options: Vec<isize> = bike.potential_lateral_positions().collect();
 
@@ -430,7 +435,7 @@ mod tests {
 
     #[test]
     fn bike_has_y_prime_empty_road() {
-        let bikes = [Bike {
+        let bikes = [BikeBuilder {
             front: 3,
             right: 3,
             length: 2,
@@ -439,9 +444,10 @@ mod tests {
             forward_speed: 0,
             forward_acceleration: 1,
             rightward_speed_max: 2,
-            rightward_speed: 0,
-            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
-        }];
+            lateral_ignorance: 0.0,
+        }
+        .build()
+        .unwrap()];
         let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
         let bike_id = 0;
 
@@ -455,7 +461,7 @@ mod tests {
 
     #[test]
     fn bike_has_no_collisions_empty_road() {
-        let bikes = [Bike {
+        let bikes = [BikeBuilder {
             front: 3,
             right: 3,
             length: 2,
@@ -464,9 +470,10 @@ mod tests {
             forward_speed: 0,
             forward_acceleration: 1,
             rightward_speed_max: 2,
-            rightward_speed: 0,
-            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
-        }];
+            lateral_ignorance: 0.0,
+        }
+        .build()
+        .unwrap()];
         let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
 
         let bike = road.get_bike(0);
@@ -478,7 +485,7 @@ mod tests {
 
     #[test]
     fn bike_is_on_road() {
-        let bikes = [Bike {
+        let bikes = [BikeBuilder {
             front: 3,
             right: 3,
             length: 2,
@@ -487,9 +494,10 @@ mod tests {
             forward_speed: 0,
             forward_acceleration: 1,
             rightward_speed_max: 2,
-            rightward_speed: 0,
-            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
-        }];
+            lateral_ignorance: 0.0,
+        }
+        .build()
+        .unwrap()];
         let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
 
         assert!(road.road_contains_occupier(road.get_bike(0)));
@@ -497,7 +505,7 @@ mod tests {
 
     #[test]
     fn bike_prefers_bl_empty_road() {
-        let bikes = [Bike {
+        let bikes = [BikeBuilder {
             front: 3,
             right: 3,
             length: 2,
@@ -506,9 +514,10 @@ mod tests {
             forward_speed: 0,
             forward_acceleration: 1,
             rightward_speed_max: 2,
-            rightward_speed: 0,
-            ignore_lateral_distribution: Bernoulli::new(0.0).unwrap(),
-        }];
+            lateral_ignorance: 0.0,
+        }
+        .build()
+        .unwrap()];
         let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
         road.update();
 
