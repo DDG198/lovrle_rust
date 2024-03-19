@@ -4,6 +4,8 @@ use std::{
     ops::RangeInclusive,
 };
 
+use rand::{seq::SliceRandom, thread_rng};
+
 use anyhow::{anyhow, Result};
 
 use crate::{bike::Bike, car::Car};
@@ -24,15 +26,23 @@ pub trait RoadOccupier {
     fn occupied_cells(&self) -> impl Iterator<Item = Coord>;
 
     fn occupier_is_within(&self, width: isize) -> bool {
-        return self.occupied_cells().any(|Coord { lat, .. }| width < lat);
+        return self.occupied_cells().any(|Coord { lat, .. }| lat < width);
+    }
+
+    fn occupier_is_entirely_within(&self, width: isize) -> bool {
+        return self.occupied_cells().all(|Coord { lat, .. }| lat < width);
     }
 
     fn occupier_is_without(&self, width: isize) -> bool {
-        return self.occupied_cells().any(|Coord { lat, .. }| lat <= width);
+        return self.occupied_cells().any(|Coord { lat, .. }| width <= lat);
+    }
+
+    fn occupier_is_entirely_without(&self, width: isize) -> bool {
+        return self.occupied_cells().all(|Coord { lat, .. }| width <= lat);
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 // every occupier is a rectangular occupier so it may make sense
 // to do away with the abstraction and just have Bikes and Cars
 // contain RectangleOccupiers to track their position and size
@@ -57,11 +67,11 @@ impl RoadOccupier for RectangleOccupier {
 
 impl RectangleOccupier {
     pub const fn left(&self) -> isize {
-        return (self.right + 1).saturating_sub_unsigned(self.width);
+        return self.right.saturating_sub_unsigned(self.width) + 1;
     }
 
     pub const fn back(&self) -> isize {
-        return (self.front + 1).saturating_sub_unsigned(self.length);
+        return self.front.saturating_sub_unsigned(self.length) + 1;
     }
 
     pub const fn back_left(&self) -> Coord {
@@ -81,7 +91,7 @@ impl RectangleOccupier {
     }
 
     pub const fn width_iterator(&self) -> RangeInclusive<isize> {
-        return self.left()..=self.front;
+        return self.left()..=self.right;
     }
 }
 
@@ -171,7 +181,7 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         return ahead_coord.map(
             |Coord {
                  long: found_long, ..
-             }| found_long - start_long,
+             }| found_long - (start_long + 1),
         );
     }
 }
@@ -224,6 +234,10 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         return Ok(road);
     }
 
+    pub const fn self_total_width(&self) -> isize {
+        return Road::<B, C, L, BLW, MLW>::total_width();
+    }
+
     pub const fn total_width() -> isize {
         RoadCells::<L, BLW, MLW>::total_width()
     }
@@ -251,6 +265,17 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .map(|(cell, bike_id)| (cell, Vehicle::Bike(bike_id)));
     }
 
+    fn iter_occupier_positions<const N: usize>(
+        occupiers: &[RectangleOccupier; N],
+    ) -> impl Iterator<Item = (Coord, usize)> + '_ {
+        return occupiers
+            .iter()
+            .enumerate()
+            .map(|(index, occupier)| zip(occupier.occupied_cells(), repeat(index)))
+            .flatten()
+            .map(|(cell, index)| (cell, index));
+    }
+
     pub fn collisions_for(&self, occupier: &impl RoadOccupier) -> Vec<&Vehicle> {
         return occupier
             .occupied_cells()
@@ -267,7 +292,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     fn bike_lane_contains_occupier(&self, occupier: &impl RoadOccupier) -> bool {
-        occupier.occupier_is_within(MLW as isize)
+        return occupier.occupier_is_without(MLW as isize);
         // // old implementation, can be tested against
         // occupier
         //     .occupied_cells()
@@ -277,7 +302,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     pub fn motor_lane_contains_occupier(&self, occupier: &impl RoadOccupier) -> bool {
-        occupier.occupier_is_without(MLW as isize)
+        return occupier.occupier_is_within(MLW as isize);
         // // old implementation, can be tested against
         // occupier
         //     .occupied_cells()
@@ -343,27 +368,68 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
 
     pub fn update(&mut self) {
         self.bikes_lateral_update();
-        // self.bikes_forward_update();
-        // self.cars_update();
+        self.bikes_forward_update();
+        self.cars_update();
     }
 
-    fn bikes_lateral_update(&self) {
-        let new_bikes: [Bike; B] = self
+    pub fn bikes_lateral_update(&mut self) {
+        let shuffled_new_bikes = {
+            let mut rng = thread_rng();
+            let mut next_bikes: Vec<(usize, Bike)> =
+                self.next_bikes().into_iter().enumerate().collect();
+            next_bikes.shuffle(&mut rng);
+            next_bikes
+        };
+
+        self.wipe_bikes_from_cells();
+        for (bike_id, new_bike) in shuffled_new_bikes {
+            let bike_to_occupy = match self.collisions_for(&new_bike).is_empty() {
+                true => new_bike,
+                false => *self.bikes.get(bike_id).expect("should be a valid bike id"),
+            };
+            bike_to_occupy.occupied_cells().for_each(|occupied_cell| {
+                self.cells
+                    .cells
+                    .insert(occupied_cell, Vehicle::Bike(bike_id));
+            });
+            self.bikes[bike_id] = bike_to_occupy;
+        }
+    }
+
+    fn wipe_bikes_from_cells(&mut self) {
+        self.bikes
+            .iter()
+            .map(|bike| bike.occupied_cells())
+            .flatten()
+            .for_each(|bike_cell| {
+                let removed = self.cells.cells.remove(&bike_cell);
+                debug_assert!(
+                    removed.is_some_and(|vehicle| match vehicle {
+                        Vehicle::Bike(_) => true,
+                        Vehicle::Car(_) => false,
+                    }),
+                    "expected to find a bike at this location"
+                );
+            })
+    }
+
+    fn next_bikes(&self) -> [Bike; B] {
+        // parallelise me for optimisation
+        return self
             .bikes
             .iter()
             .enumerate()
-            .map(|(bike_id, bike)| bike.self_lateral_update(bike_id, self))
+            .map(|(bike_id, bike)| bike.lateral_update(bike_id, self))
             .collect::<Vec<Bike>>()
             .try_into()
             .expect("array length should be okay due to const generic B");
+    }
+
+    fn bikes_forward_update(&mut self) {
         todo!()
     }
 
-    fn bikes_forward_update(&self) {
-        todo!()
-    }
-
-    fn cars_update(&self) {
+    fn cars_update(&mut self) {
         todo!()
     }
 
@@ -377,10 +443,13 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
 
 #[cfg(test)]
 mod tests {
-    use proptest::proptest;
+    use std::collections::HashSet;
+
+    use proptest::{prop_assert_eq, proptest};
 
     use crate::{
         bike::BikeBuilder,
+        proptest_defs::arb_rectangle_occupier,
         road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle},
     };
 
@@ -456,7 +525,7 @@ mod tests {
             length,
         };
 
-        let cells: Vec<Coord> = occupation.occupied_cells().collect();
+        let cells: HashSet<Coord> = occupation.occupied_cells().collect();
 
         println!("occupier: {:?}", occupation);
 
@@ -464,12 +533,12 @@ mod tests {
         assert_eq!(cells.len(), area);
         assert_eq!(
             cells,
-            vec![
+            HashSet::from([
                 Coord { lat: 4, long: 1 },
                 Coord { lat: 5, long: 1 },
                 Coord { lat: 4, long: 2 },
                 Coord { lat: 5, long: 2 }
-            ]
+            ])
         );
     }
 
@@ -584,15 +653,16 @@ mod tests {
 
     proptest!(
         #[test]
-        fn rectangle_occupier_correct_size_proptest(occupier: RectangleOccupier) {
+        fn rectangle_occupier_correct_size_proptest(occupier in arb_rectangle_occupier(-10_000..10_000, -100..100, 10, 10)) {
             let area = occupier.width * occupier.length;
             println!("occupier: {:?}", occupier);
-            assert_eq!(occupier.occupied_cells().count(), area)
+            prop_assert_eq!(occupier.occupied_cells().count(), area)
         }
 
         #[test]
         fn rectangle_occupier_correct_width_proptest(occupier: RectangleOccupier) {
-            assert_eq!(occupier.width_iterator().count(), occupier.width)
+            println!("occupier: {:?}", occupier);
+            prop_assert_eq!(occupier.width_iterator().count(), occupier.width);
         }
     );
 
@@ -636,5 +706,10 @@ mod tests {
         };
 
         assert_eq!(occupier.length_iterator().count(), length as usize)
+    }
+
+    #[test]
+    fn positions_on_nm_lane_higher_priority_than_m_lane() {
+        let road = Road::<1, 0, 100, 7, 7>::new([BikeBuilder::default().build().unwrap()], []);
     }
 }
