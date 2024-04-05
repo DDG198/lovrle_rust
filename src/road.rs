@@ -55,14 +55,32 @@ pub struct RectangleOccupier {
 
 impl RoadOccupier for RectangleOccupier {
     fn occupied_cells(&self) -> impl Iterator<Item = Coord> {
-        return self
-            .width_iterator()
-            .map(|lat| zip(repeat(lat), self.length_iterator()))
-            .flatten()
-            .map(|(lat, long)| Coord { lat, long });
+        return rectangle_occupation(self.front, self.right, self.width, self.length);
+        // return self
+        //     .width_iterator()
+        //     .map(|lat| zip(repeat(lat), self.length_iterator()))
+        //     .flatten()
+        //     .map(|(lat, long)| Coord { lat, long });
     }
 
     // Optimisation: can customise the occupier is within and out implementations
+}
+
+pub fn rectangle_occupation(
+    front: isize,
+    right: isize,
+    width: usize,
+    length: usize,
+) -> impl Iterator<Item = Coord> {
+    return (right.saturating_sub_unsigned(width) + 1..=right)
+        .map(move |lat| {
+            zip(
+                repeat(lat),
+                front.saturating_sub_unsigned(length) + 1..=front,
+            )
+        })
+        .flatten()
+        .map(|(lat, long)| Coord { lat, long });
 }
 
 impl RectangleOccupier {

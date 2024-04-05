@@ -878,9 +878,4 @@ mod tests {
 
         assert_eq!(y_prime_prime_type, YPrimePrimeFilter::MotorLaneNonBlocking);
     }
-
-    #[test]
-    fn positions_on_nm_lane_higher_priority_than_m_lane() {
-        let road = Road::<1, 0, 100, 7, 7>::new(Default::default(), Default::default());
-    }
 }
