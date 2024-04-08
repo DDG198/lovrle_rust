@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{max, Ordering};
 
 use anyhow::{anyhow, Ok, Result};
 use rand::{
@@ -18,11 +18,12 @@ pub enum YStarSelectionStrategy {
 pub struct Bike {
     occupation: RectangleOccupier,
     forward_speed_max: isize,
-    forward_speed: isize,
+    pub forward_speed: isize,
     forward_acceleration: isize,
     rightward_speed_max: isize,
     rightward_speed: isize,
     ignore_lateral_distribution: Bernoulli,
+    decelerate_distribution: Bernoulli,
     y_star_selection_strategy: YStarSelectionStrategy,
 }
 
@@ -50,6 +51,10 @@ impl Bike {
         return self
             .ignore_lateral_distribution
             .sample(&mut rand::thread_rng());
+    }
+
+    fn should_decelerate(&self) -> bool {
+        return self.decelerate_distribution.sample(&mut rand::thread_rng());
     }
 
     fn y_j_t_plus_1(&self) -> impl Iterator<Item = isize> {
@@ -219,6 +224,48 @@ impl Bike {
         }
         .expect("y_prime_prime should never be empty");
     }
+
+    pub fn forward_update<
+        const B: usize,
+        const C: usize,
+        const L: usize,
+        const BLW: usize,
+        const MLW: usize,
+    >(
+        &self,
+        road: &Road<B, C, L, BLW, MLW>,
+    ) -> Self {
+        let next_speed = [
+            // try and accelerate
+            self.forward_speed + self.forward_acceleration,
+            // unless that is too fast
+            self.forward_speed_max,
+            // unless you'd crash by going that fast
+            road.front_gap(&self.rectangle_occupation())
+                .expect("bike should have width")
+                .try_into()
+                .expect("shouldn't be too large"),
+        ]
+        .into_iter()
+        .min()
+        .expect("iterator should have 3 values");
+
+        let next_speed = match self.should_decelerate() {
+            false => next_speed,
+            true => max(next_speed - 1, 0),
+        };
+
+        let next_occupation = RectangleOccupier {
+            front: self.occupation.front + next_speed,
+            ..self.occupation
+        };
+
+        return Self {
+            occupation: next_occupation,
+            forward_speed: next_speed,
+            ..*self
+        };
+    }
 }
 
 fn rightmost_y_star_selector(
@@ -387,6 +434,7 @@ pub struct BikeBuilder {
     forward_acceleration: isize,
     rightward_speed_max: isize,
     lateral_ignorance: f64,
+    deceleration_prob: f64,
     y_star_selection_strategy: YStarSelectionStrategy,
 }
 
@@ -394,6 +442,7 @@ impl BikeBuilder {
     pub fn deterministic_default() -> Self {
         Self {
             lateral_ignorance: 0.0,
+            deceleration_prob: 0.0,
             y_star_selection_strategy: YStarSelectionStrategy::Rightmost,
             ..Default::default()
         }
@@ -505,6 +554,19 @@ impl BikeBuilder {
         };
     }
 
+    pub fn with_deceleration_prob(&self, deceleration_prob: f64) -> Result<Self> {
+        return match deceleration_prob <= 0.0 && 1.0 <= deceleration_prob {
+            true => Err(anyhow!(
+                "deceleration_prob must be between 0 and 1, instead {}",
+                deceleration_prob
+            )),
+            false => Ok(Self {
+                deceleration_prob,
+                ..*self
+            }),
+        };
+    }
+
     pub fn with_y_star_selection_strategy(
         &self,
         y_star_selection_strategy: YStarSelectionStrategy,
@@ -532,6 +594,7 @@ impl Default for BikeBuilder {
             forward_acceleration: 1,
             rightward_speed_max: 2,
             lateral_ignorance: 0.2,
+            deceleration_prob: 0.2,
             y_star_selection_strategy: YStarSelectionStrategy::UniformRandom,
         }
     }
@@ -560,6 +623,7 @@ impl TryInto<Bike> for &BikeBuilder {
                 rightward_speed_max: self.rightward_speed_max,
                 rightward_speed: 0,
                 ignore_lateral_distribution: Bernoulli::new(self.lateral_ignorance)?,
+                decelerate_distribution: Bernoulli::new(self.deceleration_prob)?,
                 y_star_selection_strategy: self.y_star_selection_strategy,
             }),
         };
@@ -767,6 +831,28 @@ mod tests {
             .unwrap();
 
         assert!(bike.should_ignore_lateral_movement())
+    }
+
+    #[test]
+    fn zero_deceleration_prob_never_decelerates() {
+        let bike = BikeBuilder::default()
+            .with_deceleration_prob(0.0)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert!(!bike.should_decelerate())
+    }
+
+    #[test]
+    fn one_deceleration_prob_always_decelerates() {
+        let bike = BikeBuilder::default()
+            .with_deceleration_prob(1.0)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert!(bike.should_decelerate())
     }
 
     #[test]

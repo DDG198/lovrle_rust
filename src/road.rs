@@ -117,6 +117,7 @@ impl RectangleOccupier {
 const CAR_ALLOCATION: usize = 12;
 const BIKE_ALLOCATION: usize = 4;
 
+#[derive(Debug)]
 pub struct RoadCells<const L: usize, const BLW: usize, const MLW: usize> {
     cells: HashMap<Coord, Vehicle>,
 }
@@ -176,7 +177,7 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
             });
     }
 
-    fn front_gap(&self, coord: &Coord, maybe_max: Option<usize>) -> Option<isize> {
+    fn front_gap(&self, coord: &Coord, maybe_max: Option<usize>) -> usize {
         let Coord {
             lat: start_lat,
             long: start_long,
@@ -196,11 +197,20 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
             })
             .find(|coord| self.get(&coord).is_some());
 
-        return ahead_coord.map(
-            |Coord {
-                 long: found_long, ..
-             }| found_long - (start_long + 1),
-        );
+        return match ahead_coord {
+            Some(Coord {
+                long: found_long, ..
+            }) => {
+                let ahead = found_long - (start_long + 1);
+                match ahead.is_positive() {
+                    true => ahead,
+                    false => ahead + L as isize,
+                }
+                .try_into()
+                .expect("positive should be convertible")
+            }
+            None => max_search,
+        };
     }
 }
 
@@ -230,6 +240,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 }
 
+#[derive(Debug)]
 pub struct Road<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW: usize>
 {
     bikes: [Bike; B],
@@ -384,21 +395,23 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             });
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self) -> Result<()> {
         self.bikes_lateral_update();
-        self.bikes_forward_update();
+        self.bikes_forward_update()?;
         self.cars_update();
+        return Ok(());
     }
 
     pub fn bikes_lateral_update(&mut self) {
         let shuffled_new_bikes = {
             let mut rng = thread_rng();
             let mut next_bikes: Vec<(usize, Bike)> =
-                self.next_bikes().into_iter().enumerate().collect();
+                self.next_bikes_lateral().into_iter().enumerate().collect();
             next_bikes.shuffle(&mut rng);
             next_bikes
         };
 
+        // no need for this function if it's just being used in the one place
         self.wipe_bikes_from_cells();
         for (bike_id, new_bike) in shuffled_new_bikes {
             let bike_to_occupy = match self.collisions_for(&new_bike).is_empty() {
@@ -413,6 +426,75 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             self.bikes[bike_id] = bike_to_occupy;
         }
     }
+
+    pub fn bikes_forward_update(&mut self) -> Result<()> {
+        // should be okay as there can be no collisions when moving forwards?
+        // ^ check this ^
+        let next_bikes = self.next_bikes_forward();
+        self.wipe_bikes_from_cells();
+        next_bikes
+            .iter()
+            .enumerate()
+            .map(|(index, bike)| zip(bike.occupied_cells(), repeat(index)))
+            .flatten()
+            // same criticism as for iter_car_positions
+            .map(|(cell, bike_id)| (cell, Vehicle::Bike(bike_id)))
+            .try_for_each(|(cell, insert_vehicle)| {
+                match self.cells.cells.insert(cell, insert_vehicle) {
+                    Some(found_vehicle) => Err(anyhow!(
+                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}",
+                        self.cells.cells.get(&cell),
+                        found_vehicle,
+                        cell
+                    )),
+                    None => Ok(()),
+                }
+            })?;
+        self.bikes = next_bikes;
+        return Ok(());
+        // let shuffled_new_bikes = {
+        //     let mut rng = thread_rng();
+        //     let mut next_bikes: Vec<(usize, Bike)> =
+        //         self.next_bikes_forward().into_iter().enumerate().collect();
+        //     next_bikes.shuffle(&mut rng);
+        //     next_bikes
+        // };
+
+        // self.replace_bikes(shuffled_new_bikes);
+    }
+
+    // fn replace_bikes(&mut self, new_bikes: Vec<(usize, Bike)>) {
+    //     // no need for this function if it's just being used in the one place
+    //     self.wipe_bikes_from_cells();
+    //     for (bike_id, new_bike) in new_bikes {
+    //         let bike_to_occupy = match self.collisions_for(&new_bike).is_empty() {
+    //             true => new_bike,
+    //             false => *self.bikes.get(bike_id).expect("should be a valid bike id"),
+    //         };
+    //         bike_to_occupy.occupied_cells().for_each(|occupied_cell| {
+    //             self.cells
+    //                 .cells
+    //                 .insert(occupied_cell, Vehicle::Bike(bike_id));
+    //         });
+    //         self.bikes[bike_id] = bike_to_occupy;
+    //     }
+    // }
+
+    // fn replace_bikes_with(&mut self, new_bikes: Vec<(usize, Bike)>) {
+    //     self.wipe_bikes_from_cells();
+    //     for (bike_id, new_bike) in new_bikes {
+    //         let bike_to_occupy = match self.collisions_for(&new_bike).is_empty() {
+    //             true => new_bike,
+    //             false => *self.bikes.get(bike_id).expect("should be a valid bike id"),
+    //         };
+    //         bike_to_occupy.occupied_cells().for_each(|occupied_cell| {
+    //             self.cells
+    //                 .cells
+    //                 .insert(occupied_cell, Vehicle::Bike(bike_id));
+    //         });
+    //         self.bikes[bike_id] = bike_to_occupy;
+    //     }
+    // }
 
     fn wipe_bikes_from_cells(&mut self) {
         self.bikes
@@ -431,7 +513,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             })
     }
 
-    fn next_bikes(&self) -> [Bike; B] {
+    fn next_bikes_lateral(&self) -> [Bike; B] {
         // parallelise me for optimisation
         return self
             .bikes
@@ -443,18 +525,22 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .expect("array length should be okay due to const generic B");
     }
 
-    fn bikes_forward_update(&mut self) {
-        todo!()
+    fn next_bikes_forward(&self) -> [Bike; B] {
+        return self.bikes.map(|bike| bike.forward_update(self));
     }
 
     fn cars_update(&mut self) {
-        todo!()
+        self.cars = self.next_cars();
     }
 
-    pub fn front_gap(&self, occupation: &RectangleOccupier) -> Option<isize> {
+    fn next_cars(&self) -> [Car; C] {
+        return self.cars.map(|car| car.update(self));
+    }
+
+    pub fn front_gap(&self, occupation: &RectangleOccupier) -> Option<usize> {
         occupation
             .front_cells()
-            .filter_map(|coord| self.cells.front_gap(&coord, None))
+            .map(|coord| self.cells.front_gap(&coord, None))
             .min()
     }
 }
@@ -466,7 +552,7 @@ mod tests {
     use proptest::{prop_assert_eq, proptest};
 
     use crate::{
-        bike::BikeBuilder,
+        bike::{Bike, BikeBuilder},
         proptest_defs::arb_rectangle_occupier,
         road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle},
     };
@@ -488,26 +574,167 @@ mod tests {
             .map(|builder| builder.try_into().unwrap());
         let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
 
-        road.update();
+        road.update().unwrap();
 
         let new_position = road.get_bike(0).rectangle_occupation();
 
-        assert!(road.motor_lane_contains_occupier(&new_position));
+        assert!(road.road_contains_occupier(&new_position));
     }
 
     #[test]
-    fn multiple_updates_work() {
+    fn bikes_same_size_after_update() {
         let bikes = [BikeBuilder::default().with_lateral_ignorance(0.0).unwrap()]
             .map(|builder| builder.try_into().unwrap());
         let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+        let original_dims = road.bikes.map(|bike| {
+            let RectangleOccupier { width, length, .. } = bike.rectangle_occupation();
+            return (width, length);
+        });
+        road.update().unwrap();
+        let new_dims = road.bikes.map(|bike| {
+            let RectangleOccupier { width, length, .. } = bike.rectangle_occupation();
+            return (width, length);
+        });
 
-        for _ in 0..1000 {
-            road.update();
+        assert_eq!(original_dims, new_dims);
+    }
+
+    #[test]
+    fn single_bike_multiple_updates_work() {
+        let bikes = [BikeBuilder::default()].map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        for iter_num in 0u16..1000 {
+            println!("iteration #{:?}", iter_num);
+            road.update().unwrap();
         }
 
         let new_position = road.get_bike(0).rectangle_occupation();
 
-        assert!(road.motor_lane_contains_occupier(&new_position));
+        assert!(road.road_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn multiple_bikes_multiple_updates_work() -> anyhow::Result<()> {
+        let bikes = [0, 3, 4, 8, 12]
+            .map(|front| BikeBuilder::default().with_front_at(front))
+            .map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<5, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        for iter_num in 0u16..1000 {
+            println!("iteration #{:?}", iter_num);
+            road.update().unwrap();
+        }
+
+        println!("{:?}", road);
+        return Ok(());
+    }
+
+    #[test]
+    fn single_bike_lateral_update_works() {
+        let bikes =
+            [BikeBuilder::deterministic_default()].map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        road.bikes_lateral_update();
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(road.road_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn single_bike_forward_update_works() {
+        let bikes =
+            [BikeBuilder::deterministic_default()].map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        road.bikes_forward_update().unwrap();
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(road.road_contains_occupier(&new_position));
+    }
+
+    #[test]
+    fn single_bike_forward_update_works_as_expected() -> anyhow::Result<()> {
+        let bikes = [
+            BikeBuilder::default()
+                .with_front_at(2) // 2
+                .with_forward_speed(3)? // + 3 = 5
+                .with_forward_acceleration(1)? // + 1 = 6
+                .with_forward_max_speed(10)? // min(6, 10) = 6
+                .with_deceleration_prob(0.0)?, // - 0 = 6
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        road.bikes_forward_update().unwrap();
+
+        let RectangleOccupier {
+            front: new_front, ..
+        } = road.get_bike(0).rectangle_occupation();
+
+        assert_eq!(new_front, 6);
+        return Ok(());
+    }
+
+    #[test]
+    fn single_bike_next_forward_works_as_expected() -> anyhow::Result<()> {
+        let bikes = [
+            BikeBuilder::default()
+                .with_front_at(2) // 2
+                .with_forward_speed(3)? // + 3 = 5
+                .with_forward_acceleration(1)? // + 1 = 6
+                .with_forward_max_speed(10)? // min(6, 10) = 6
+                .with_deceleration_prob(0.0)?, // - 0 = 6
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let [next_bike] = road.next_bikes_forward();
+
+        let RectangleOccupier {
+            front: new_front, ..
+        } = next_bike.rectangle_occupation();
+
+        assert_eq!(new_front, 6);
+        return Ok(());
+    }
+
+    #[test]
+    fn single_bike_forward_update_speeds_up_as_expected() -> anyhow::Result<()> {
+        let speed = 3;
+        let acceleration = 1;
+        let expected_speed = speed + acceleration;
+        let bikes = [
+            BikeBuilder::default()
+                .with_forward_speed(speed)?
+                .with_forward_acceleration(acceleration)?
+                .with_forward_max_speed(expected_speed + 25)? // too big to matter
+                .with_deceleration_prob(0.0)?, // won't be messed up
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let [Bike { forward_speed, .. }] = road.next_bikes_forward();
+
+        assert_eq!(forward_speed, expected_speed);
+        return Ok(());
+    }
+
+    #[test]
+    fn single_bike_lateral_and_forward_update_works() {
+        let bikes =
+            [BikeBuilder::deterministic_default()].map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        road.bikes_lateral_update();
+        road.bikes_forward_update().unwrap();
+
+        let new_position = road.get_bike(0).rectangle_occupation();
+
+        assert!(road.road_contains_occupier(&new_position));
     }
 
     #[test]
@@ -603,7 +830,7 @@ mod tests {
         .map(|builder| builder.try_into().unwrap());
         let road = Road::<2, 0, 20, 3, 3>::new(bikes, []).unwrap();
 
-        let front_gap = road.cells.front_gap(&trailing_coord, None).unwrap();
+        let front_gap = road.cells.front_gap(&trailing_coord, None);
 
         assert_eq!(front_gap, 5);
     }

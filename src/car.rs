@@ -1,10 +1,12 @@
-use crate::road::rectangle_occupation;
+use crate::road::{rectangle_occupation, Road};
 use std::cmp::min;
 
 use anyhow::{anyhow, Result};
+use rand::distributions::Bernoulli;
 
 use crate::road::{Coord, RoadOccupier};
 
+#[derive(Copy, Clone, Debug)]
 pub struct Car {
     front: isize,
     length: usize,
@@ -13,8 +15,7 @@ pub struct Car {
     acceleration: isize,
     speed_max: isize,
     alpha: f32,
-    beta: f32,
-    deceleration_prob: f32,
+    deceleration_distribution: Bernoulli,
 }
 
 impl RoadOccupier for Car {
@@ -64,6 +65,19 @@ impl Car {
     pub fn front(&self) -> isize {
         return self.front;
     }
+
+    pub(crate) fn update<
+        const B: usize,
+        const C: usize,
+        const L: usize,
+        const BLW: usize,
+        const MLW: usize,
+    >(
+        &self,
+        road: &Road<B, C, L, BLW, MLW>,
+    ) -> Car {
+        todo!()
+    }
 }
 
 fn lateral_occupancy(width: f32, speed: isize, alpha: f32, beta: f32) -> isize {
@@ -74,13 +88,13 @@ fn lateral_occupancy(width: f32, speed: isize, alpha: f32, beta: f32) -> isize {
 struct CarBuilder {
     front: isize,
     length: usize,
-    const_width: f32,
+    car_width: f32,
     alpha: f32,
     beta: f32,
     speed_max: isize,
     speed: isize,
     acceleration: isize,
-    deceleration_prob: f32,
+    deceleration_prob: f64,
 }
 
 impl TryFrom<&CarBuilder> for Car {
@@ -96,13 +110,12 @@ impl TryFrom<&CarBuilder> for Car {
             false => Ok(Self {
                 front: value.front,
                 length: value.length,
-                const_width: value.const_width,
+                const_width: value.car_width + value.beta,
                 speed_max: value.speed_max,
                 speed: value.speed,
                 acceleration: value.acceleration,
                 alpha: value.alpha,
-                beta: value.beta,
-                deceleration_prob: value.deceleration_prob,
+                deceleration_distribution: Bernoulli::new(value.deceleration_prob)?,
             }),
         };
     }
@@ -112,7 +125,7 @@ impl TryFrom<CarBuilder> for Car {
     type Error = anyhow::Error;
 
     fn try_from(value: CarBuilder) -> Result<Self> {
-        return Self::try_from(value);
+        return Self::try_from(&value);
     }
 }
 
