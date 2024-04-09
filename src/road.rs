@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::{Display, Formatter},
     iter::{repeat, zip},
     ops::RangeInclusive,
 };
@@ -233,10 +234,58 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
                         cell
                     )),
                     None => Ok(()),
-                },
-            )?;
+                }
+            })?;
 
         return Ok(Self { cells });
+    }
+}
+
+impl<const L: usize, const BLW: usize, const MLW: usize> Display for RoadCells<L, BLW, MLW> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let max_id_len = self
+            .cells
+            .values()
+            .map(|vehicle| match vehicle {
+                Vehicle::Bike(id) => id,
+                Vehicle::Car(id) => id,
+            })
+            .max()
+            .unwrap()
+            .to_string()
+            .len();
+
+        let max_long_len = (L - 1).to_string().len();
+        let long_buffer = String::from_iter(repeat(' ').take(max_long_len));
+
+        let mut repr = String::new();
+        repr.push_str(&long_buffer);
+        repr.push_str(" ");
+        for lat_header_val in 0..Self::total_width() {
+            let header = format!("{:>1$}", lat_header_val, max_id_len + 2); // plus 2 for space and B/C
+            repr.push_str(&header);
+        }
+        repr.push('\n');
+        for long in 0..L {
+            repr.push_str(&format!("{:1$}|", long, max_long_len));
+            for lat in 0..(Self::total_width() as usize) {
+                let cell_repr = match self
+                    .get(&Coord {
+                        lat: lat.try_into().unwrap(),
+                        long: long.try_into().unwrap(),
+                    })
+                    .unwrap()
+                {
+                    Some(Vehicle::Bike(id)) => format!(" B{:1$}", id, max_id_len),
+                    Some(Vehicle::Car(id)) => format!(" C{:1$}", id, max_id_len),
+                    None => String::from_iter(repeat(' ').take(max_id_len + 2)),
+                };
+                repr.push_str(&cell_repr);
+            }
+            repr.push('\n');
+        }
+
+        write!(f, "{}", repr)
     }
 }
 
