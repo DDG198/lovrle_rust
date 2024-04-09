@@ -12,7 +12,9 @@ pub struct Car {
     length: usize,
     const_width: f32,
     speed: isize,
-    acceleration: isize,
+    fast_acceleration: isize,
+    slow_acceleration: isize,
+    max_slow_speed: isize,
     speed_max: isize,
     alpha: f32,
     deceleration_distribution: Bernoulli,
@@ -59,7 +61,11 @@ impl Car {
     // }
 
     pub fn next_iteration_potential_speed(&self) -> isize {
-        return min(self.speed + self.acceleration, self.speed_max as isize);
+        let acceleration = match self.speed <= self.max_slow_speed {
+            true => self.slow_acceleration,
+            false => self.fast_acceleration,
+        };
+        return min(self.speed + acceleration, self.speed_max as isize);
     }
 
     pub fn front(&self) -> isize {
@@ -93,8 +99,28 @@ struct CarBuilder {
     beta: f32,
     speed_max: isize,
     speed: isize,
-    acceleration: isize,
     deceleration_prob: f64,
+    slow_acceleration: isize,
+    fast_acceleration: isize,
+    max_slow_speed: isize,
+}
+
+impl Default for CarBuilder {
+    fn default() -> Self {
+        Self {
+            front: 5,
+            length: 5,
+            car_width: 3.6,
+            alpha: 0.26,
+            beta: 0.6,
+            speed_max: 20,
+            speed: 0,
+            slow_acceleration: 2,
+            fast_acceleration: 1,
+            max_slow_speed: 5,
+            deceleration_prob: 0.2,
+        }
+    }
 }
 
 impl TryFrom<&CarBuilder> for Car {
@@ -113,7 +139,9 @@ impl TryFrom<&CarBuilder> for Car {
                 const_width: value.car_width + value.beta,
                 speed_max: value.speed_max,
                 speed: value.speed,
-                acceleration: value.acceleration,
+                fast_acceleration: value.fast_acceleration,
+                slow_acceleration: value.slow_acceleration,
+                max_slow_speed: value.max_slow_speed,
                 alpha: value.alpha,
                 deceleration_distribution: Bernoulli::new(value.deceleration_prob)?,
             }),
