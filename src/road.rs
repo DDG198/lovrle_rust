@@ -135,7 +135,7 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         if lat.is_negative() {
             return Err(anyhow!("lat value {} was less than 0", lat));
         };
-        return match lat < Self::total_width() {
+        return match lat < Self::total_width_isize() {
             true => Ok(Coord {
                 lat,
                 long: long.rem_euclid(L as isize),
@@ -143,13 +143,17 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
             false => Err(anyhow!(
                 "lat value {} exceeded total road width {}",
                 lat,
-                Self::total_width()
+                Self::total_width_isize()
             )),
         };
     }
 
-    const fn total_width() -> isize {
-        return (BLW + MLW) as isize;
+    const fn total_width() -> usize {
+        return BLW + MLW;
+    }
+
+    const fn total_width_isize() -> isize {
+        return Self::total_width() as isize;
     }
 
     fn get(&self, coord: &Coord) -> Result<Option<&Vehicle>> {
@@ -231,6 +235,21 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
             None => max_search,
         };
     }
+
+    fn route_width(&self, long: isize) -> usize {
+        let validated_long = long.rem_euclid(L as isize);
+        (0..Self::total_width())
+            .find(|lat| {
+                // use the raw hashmap as we expect our values to be okay
+                let coord = Coord {
+                    lat: *lat as isize,
+                    long: validated_long,
+                };
+                debug_assert!(Self::validate_coord(coord).is_ok());
+                self.cells.get(&coord).is_some()
+            })
+            .unwrap_or(Self::total_width())
+    }
 }
 
 impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW: usize>
@@ -279,14 +298,14 @@ impl<const L: usize, const BLW: usize, const MLW: usize> Display for RoadCells<L
         let mut repr = String::new();
         repr.push_str(&long_buffer);
         repr.push_str(" ");
-        for lat_header_val in 0..Self::total_width() {
+        for lat_header_val in 0..Self::total_width_isize() {
             let header = format!("{:>1$}", lat_header_val, max_id_len + 2); // plus 2 for space and B/C
             repr.push_str(&header);
         }
         repr.push('\n');
         for long in 0..L {
             repr.push_str(&format!("{:1$}|", long, max_long_len));
-            for lat in 0..(Self::total_width() as usize) {
+            for lat in 0..(Self::total_width_isize() as usize) {
                 let cell_repr = match self
                     .get(&Coord {
                         lat: lat.try_into().unwrap(),
@@ -335,7 +354,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     pub const fn total_width() -> isize {
-        RoadCells::<L, BLW, MLW>::total_width()
+        RoadCells::<L, BLW, MLW>::total_width_isize()
     }
 
     pub fn iter_car_positions(&self) -> impl Iterator<Item = (Coord, Vehicle)> + '_ {
@@ -599,6 +618,10 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .front_cells()
             .map(|coord| self.cells.front_gap(&coord, None))
             .min()
+    }
+
+    pub(crate) fn route_width(&self, long: isize) -> usize {
+        return self.cells.route_width(long);
     }
 }
 
@@ -934,6 +957,44 @@ mod tests {
         let front_gap = road.cells.front_gap(&trailing_coord, None);
 
         assert_eq!(front_gap, 5);
+    }
+
+    #[test]
+    fn route_width_works() {
+        /*
+        right ->
+          0 1 2¦3 4 5 ^ back
+        0
+        1
+        2     \ ^
+        3 . . < x
+        4
+
+        long in [2, 3] => width = 2
+        otherwise => width = 6
+        */
+
+        let long = 3;
+        let lat = 3;
+        let dimensions = (2, 2);
+        let bikes = [BikeBuilder::default()
+            .with_dimensions(dimensions)
+            .unwrap()
+            .with_front_at(long)
+            .with_right_at(lat)]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        assert_eq!(road.route_width(0), 6);
+        assert_eq!(road.route_width(1), 6);
+        assert_eq!(road.route_width(2), 2);
+        assert_eq!(road.route_width(3), 2);
+        assert_eq!(road.route_width(4), 6);
+        assert_eq!(road.route_width(5), 6);
+        assert_eq!(road.route_width(21), 6);
+        assert_eq!(road.route_width(22), 2);
+        assert_eq!(road.route_width(23), 2);
+        assert_eq!(road.route_width(24), 6);
     }
 
     #[test]

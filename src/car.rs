@@ -1,8 +1,8 @@
 use crate::road::{rectangle_occupation, Road};
-use std::cmp::min;
+use std::cmp::{max, min};
 
 use anyhow::{anyhow, Result};
-use rand::distributions::Bernoulli;
+use rand::{distributions::Bernoulli, prelude::Distribution};
 
 use crate::road::{Coord, RoadOccupier};
 
@@ -28,36 +28,9 @@ impl RoadOccupier for Car {
 }
 
 impl Car {
-    // fn new(
-    //     front: isize,
-    //     length: usize,
-    //     natural_width: f32,
-    //     speed: isize,
-    //     acceleration: isize,
-    //     max_speed: usize,
-    //     alpha: f32,
-    //     beta: f32,
-    //     deceleration_prob: f32,
-    // ) -> Self {
-    //     Self {
-    //         front,
-    //         length: length as isize,
-    //         const_width: natural_width + beta,
-    //         speed,
-    //         acceleration,
-    //         max_speed,
-    //         alpha,
-    //         deceleration_prob,
-    //     }
-    // }
-
-    fn lateral_occupancy(&self) -> usize {
-        let additional_width = self.alpha * self.speed as f32;
-        return (self.const_width + additional_width).ceil() as usize;
-    }
-
-    // pub fn speed(&self) -> isize {
-    //     return self.speed;
+    // fn lateral_occupancy(&self) -> usize {
+    //     let additional_width = self.alpha * self.speed as f32;
+    //     return (self.const_width + additional_width).ceil() as usize;
     // }
 
     pub fn next_iteration_potential_speed(&self) -> isize {
@@ -81,14 +54,52 @@ impl Car {
     >(
         &self,
         road: &Road<B, C, L, BLW, MLW>,
-    ) -> Car {
-        todo!()
+    ) -> Self {
+        // slightly disagree with their implementation here.
+        // Shouldn't a position only be accessable if and only if
+        // all preceding positions were accessable? Otherwise the car
+        // could jump through narrow gaps if it was travelling fast enough.
+
+        // also, will this not cause issues with the back of the car colliding
+        // with other vehicles on the road as it passes? I think a full collision
+        // check should be carried out for each potential speed.
+        let mut next_speed = (0..self.next_iteration_potential_speed())
+            .filter(|speed| {
+                self.lateral_occupancy_at_speed(*speed) < road.route_width(self.front + speed)
+            })
+            .max()
+            .expect("should always be able to stay still");
+
+        next_speed = match self.should_decelerate() {
+            true => max(next_speed - 1, 0),
+            false => next_speed,
+        };
+
+        return Car {
+            front: (self.front + next_speed).rem_euclid(L as isize),
+            speed: next_speed,
+            ..*self
+        };
+    }
+
+    fn should_decelerate(&self) -> bool {
+        return self
+            .deceleration_distribution
+            .sample(&mut rand::thread_rng());
+    }
+
+    fn lateral_occupancy_at_speed(&self, speed: isize) -> usize {
+        return lateral_occupancy(self.const_width, speed, self.alpha);
+    }
+
+    fn lateral_occupancy(&self) -> usize {
+        return self.lateral_occupancy_at_speed(self.speed);
     }
 }
 
-fn lateral_occupancy(width: f32, speed: isize, alpha: f32, beta: f32) -> isize {
+fn lateral_occupancy(const_width: f32, speed: isize, alpha: f32) -> usize {
     let additional_width = alpha * speed as f32;
-    return (width + beta + additional_width).ceil() as isize;
+    return (const_width + additional_width).ceil() as usize;
 }
 
 struct CarBuilder {
