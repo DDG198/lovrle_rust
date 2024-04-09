@@ -256,7 +256,7 @@ impl Bike {
         };
 
         let next_occupation = RectangleOccupier {
-            front: self.occupation.front + next_speed,
+            front: (self.occupation.front + next_speed).rem_euclid(L as isize),
             ..self.occupation
         };
 
@@ -424,6 +424,7 @@ impl Default for Bike {
     }
 }
 
+#[derive(Debug)]
 pub struct BikeBuilder {
     front: isize,
     right: isize,

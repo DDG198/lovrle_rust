@@ -132,6 +132,9 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
 
     fn validate_coord(coord: Coord) -> Result<Coord> {
         let Coord { lat, long } = coord;
+        if lat.is_negative() {
+            return Err(anyhow!("lat value {} was less than 0", lat));
+        };
         return match lat < Self::total_width() {
             true => Ok(Coord {
                 lat,
@@ -149,8 +152,15 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         return (BLW + MLW) as isize;
     }
 
-    fn get(&self, coord: &Coord) -> Option<&Vehicle> {
-        self.cells.get(coord)
+    fn get(&self, coord: &Coord) -> Result<Option<&Vehicle>> {
+        let validated_coord = Self::validate_coord(*coord)?;
+        return Ok(self.cells.get(&validated_coord));
+    }
+
+    fn insert(&mut self, coord: Coord, vehicle: Vehicle) -> Option<Vehicle> {
+        return self
+            .cells
+            .insert(Self::validate_coord(coord).unwrap(), vehicle);
     }
 
     fn first_car_back(&self, coord: &Coord, maybe_max: Option<usize>) -> Option<&usize> {
@@ -171,7 +181,7 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
                 long: start_long - d_long,
             })
             .map(|coord| Self::validate_coord(coord).expect("lat should be in range"))
-            .filter_map(|coord| self.get(&coord))
+            .filter_map(|coord| self.get(&coord).unwrap())
             .find_map(|found_vehicle| match found_vehicle {
                 Vehicle::Bike(_) => None,
                 Vehicle::Car(found_car_id) => Some(found_car_id),
@@ -182,30 +192,38 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
         let Coord {
             lat: start_lat,
             long: start_long,
-        } = *coord;
+        } = Self::validate_coord(*coord).expect("lat value should be okay");
         let max_search = match maybe_max {
             Some(set_max) => set_max,
             None => L,
         };
 
         let ahead_coord = (1isize..max_search as isize)
-            .map(|d_long| {
-                Self::validate_coord(Coord {
-                    lat: start_lat,
-                    long: start_long + d_long,
-                })
-                .expect("lat should be in range")
+            .map(|d_long| Coord {
+                lat: start_lat,
+                long: start_long + d_long,
             })
-            .find(|coord| self.get(&coord).is_some());
+            .find(|coord| self.get(&coord).unwrap().is_some());
 
         return match ahead_coord {
             Some(Coord {
                 long: found_long, ..
             }) => {
                 let ahead = found_long - (start_long + 1);
-                match ahead.is_positive() {
-                    true => ahead,
-                    false => ahead + L as isize,
+                match ahead.is_negative() {
+                    false => ahead,
+                    true => {
+                        debug_assert!(
+                            ahead.unsigned_abs() < L,
+                            "ahead distance ({}) shouldn't be longer than the road ({}). Started from {:?}, ending on {:?} on road \n{}",
+                            ahead.unsigned_abs(),
+                            L,
+                            coord,
+                            ahead_coord.unwrap(),
+                            self
+                        );
+                        ahead + L as isize
+                    }
                 }
                 .try_into()
                 .expect("positive should be convertible")
@@ -225,8 +243,8 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
 
         road.iter_car_positions()
             .chain(road.iter_bike_positions())
-            .try_for_each(
-                |(cell, insert_vehicle)| match cells.insert(cell, insert_vehicle) {
+            .try_for_each(|(cell, insert_vehicle)| {
+                match cells.insert(Self::validate_coord(cell)?, insert_vehicle) {
                     Some(found_vehicle) => Err(anyhow!(
                         "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}",
                         cells.get(&cell),
@@ -343,22 +361,11 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .map(|(cell, bike_id)| (cell, Vehicle::Bike(bike_id)));
     }
 
-    fn iter_occupier_positions<const N: usize>(
-        occupiers: &[RectangleOccupier; N],
-    ) -> impl Iterator<Item = (Coord, usize)> + '_ {
-        return occupiers
-            .iter()
-            .enumerate()
-            .map(|(index, occupier)| zip(occupier.occupied_cells(), repeat(index)))
-            .flatten()
-            .map(|(cell, index)| (cell, index));
-    }
-
     pub fn collisions_for(&self, occupier: &impl RoadOccupier) -> Vec<&Vehicle> {
         return occupier
             .occupied_cells()
             .map(|coord| RoadCells::<L, BLW, MLW>::validate_coord(coord).unwrap())
-            .filter_map(|coord| self.cells.get(&coord))
+            .filter_map(|coord| self.cells.get(&coord).unwrap())
             .collect();
     }
 
@@ -414,7 +421,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         return occupied_cells
             .into_iter()
             .map(|coord| RoadCells::<L, BLW, MLW>::validate_coord(coord).unwrap())
-            .filter_map(|coord| self.cells.get(&coord))
+            .filter_map(|coord| self.cells.get(&coord).unwrap())
             .any(|found_vehicle| *found_vehicle != vehicle);
     }
 
@@ -468,9 +475,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
                 false => *self.bikes.get(bike_id).expect("should be a valid bike id"),
             };
             bike_to_occupy.occupied_cells().for_each(|occupied_cell| {
-                self.cells
-                    .cells
-                    .insert(occupied_cell, Vehicle::Bike(bike_id));
+                self.cells.insert(occupied_cell, Vehicle::Bike(bike_id));
             });
             self.bikes[bike_id] = bike_to_occupy;
         }
@@ -487,14 +492,15 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .map(|(index, bike)| zip(bike.occupied_cells(), repeat(index)))
             .flatten()
             // same criticism as for iter_car_positions
-            .map(|(cell, bike_id)| (cell, Vehicle::Bike(bike_id)))
-            .try_for_each(|(cell, insert_vehicle)| {
-                match self.cells.cells.insert(cell, insert_vehicle) {
+            .map(|(cell, bike_id)| (RoadCells::<L, BLW, MLW>::validate_coord(cell).unwrap(), Vehicle::Bike(bike_id)))
+            .try_for_each(|(validated_cell, insert_vehicle)| {
+                match self.cells.cells.insert(validated_cell, insert_vehicle) {
                     Some(found_vehicle) => Err(anyhow!(
-                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}",
-                        self.cells.cells.get(&cell),
+                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}. Full cells {:?}",
+                        self.cells.cells.get(&validated_cell),
                         found_vehicle,
-                        cell
+                        validated_cell,
+                        self.cells.cells
                     )),
                     None => Ok(()),
                 }
@@ -550,6 +556,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .iter()
             .map(|bike| bike.occupied_cells())
             .flatten()
+            .map(|cell| RoadCells::<L, BLW, MLW>::validate_coord(cell).unwrap())
             .for_each(|bike_cell| {
                 let removed = self.cells.cells.remove(&bike_cell);
                 debug_assert!(
@@ -557,7 +564,8 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
                         Vehicle::Bike(_) => true,
                         Vehicle::Car(_) => false,
                     }),
-                    "expected to find a bike at this location"
+                    "expected to find a bike at this location ({:?})",
+                    bike_cell
                 );
             })
     }
@@ -578,7 +586,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         return self.bikes.map(|bike| bike.forward_update(self));
     }
 
-    fn cars_update(&mut self) {
+    pub fn cars_update(&mut self) {
         self.cars = self.next_cars();
     }
 
@@ -664,14 +672,58 @@ mod tests {
     }
 
     #[test]
+    fn single_bike_front_gap_works_as_expected() {
+        let front_right = Coord { lat: 4, long: 16 };
+        let bikes = [BikeBuilder::default().with_front_right_at(front_right)]
+            .map(|builder| builder.try_into().unwrap());
+        let road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let bike_front_gap_1 = road
+            .front_gap(&road.get_bike(0).rectangle_occupation())
+            .expect("bike should have width");
+        let bike_front_gap_2 = road.cells.front_gap(&front_right, None);
+
+        assert_eq!(bike_front_gap_1, bike_front_gap_2);
+        assert_eq!(bike_front_gap_1, 18)
+    }
+
+    proptest! {
+        #[test]
+        fn single_bike_any_pos_update_works(
+            right in 1..6isize,
+            speed in 0..=6isize,
+            front in 0..20isize,
+        ) {
+            let bikes = [BikeBuilder::default().with_front_at(front).with_right_at(right).with_forward_speed(speed).unwrap()]
+                .map(|builder| builder.try_into().unwrap());
+            let mut road = Road::<1, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+            println!("{}", road.cells);
+            road.update().unwrap();
+            println!("{}", road.cells);
+
+            let new_position = road.get_bike(0).rectangle_occupation();
+
+            assert!(road.road_contains_occupier(&new_position));
+        }
+    }
+
+    #[test]
     fn multiple_bikes_multiple_updates_work() -> anyhow::Result<()> {
-        let bikes = [0, 3, 4, 8, 12]
+        let bikes: [Bike; 5] = [0, 3, 6, 9, 12]
             .map(|front| BikeBuilder::default().with_front_at(front))
             .map(|builder| builder.try_into().unwrap());
+        for (bike_id, bike) in bikes.iter().enumerate() {
+            println!("bike {}", bike_id);
+            let occupied_cells: Vec<Coord> = bike.occupied_cells().collect();
+            println!("occupied cells: {:?}", occupied_cells)
+        }
         let mut road = Road::<5, 0, 20, 3, 3>::new(bikes, []).unwrap();
 
         for iter_num in 0u16..1000 {
             println!("iteration #{:?}", iter_num);
+            println!("road cells:");
+            println!("{}", road.cells);
             road.update().unwrap();
         }
 
@@ -885,6 +937,36 @@ mod tests {
     }
 
     #[test]
+    fn cells_front_gap_works_no_space() {
+        /*
+        0 1 2 3 4 5 6 7 8 9 10
+              t   l
+            x x o o
+                >
+        length 0
+        */
+        let trailing_coord = Coord { lat: 3, long: 3 };
+        let leading_coord = Coord { lat: 3, long: 5 };
+        let dimensions = (2, 2);
+        let bikes = [
+            BikeBuilder::default()
+                .with_dimensions(dimensions)
+                .unwrap()
+                .with_front_right_at(trailing_coord),
+            BikeBuilder::default()
+                .with_dimensions(dimensions)
+                .unwrap()
+                .with_front_right_at(leading_coord),
+        ]
+        .map(|builder| builder.try_into().unwrap());
+        let road = Road::<2, 0, 20, 3, 3>::new(bikes, []).unwrap();
+
+        let front_gap = road.cells.front_gap(&trailing_coord, None);
+
+        assert_eq!(front_gap, 0);
+    }
+
+    #[test]
     fn bike_is_where_expected() {
         /*
         0 1 2 3 4 5 6 7 8 9 10
@@ -909,7 +991,7 @@ mod tests {
         println!("occupied coords: {:?}", occupied_coords);
         println!("length: {}", occupied_coords.len());
 
-        let found_vehicle = road.cells.get(&coord).unwrap();
+        let found_vehicle = road.cells.get(&coord).unwrap().unwrap();
 
         assert_eq!(*found_vehicle, Vehicle::Bike(0));
     }

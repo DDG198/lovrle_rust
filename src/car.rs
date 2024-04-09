@@ -158,4 +158,16 @@ impl TryFrom<CarBuilder> for Car {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use crate::road::Road;
+
+    use crate::car::CarBuilder;
+
+    #[test]
+    fn car_update_works() {
+        let cars = [CarBuilder::default()].map(|builder| builder.try_into().unwrap());
+        let mut road = Road::<0, 1, 20, 3, 3>::new([], cars).unwrap();
+
+        road.cars_update()
+    }
+}

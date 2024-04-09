@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b400ac71f851578fe4fd80dbb4d216d4ba3ffcc364556e1be79e0d7022b3d077 # shrinks to width = 1, length = 1, front = 0, right = 1
+cc 4b9e5af488abfa845605489d348b00ed515fa4ef0d65025c79f91a82d4b4a42d # shrinks to right = 6
+cc 03b1b8464497237858a31ad5037e28a341eb9ef431eb6919352f1c8fc5fab409 # shrinks to right = 1, speed = 0, front = 0
