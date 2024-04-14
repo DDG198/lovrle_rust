@@ -21,19 +21,14 @@ pub struct Bike {
     pub forward_speed: isize,
     forward_acceleration: isize,
     rightward_speed_max: isize,
-    rightward_speed: isize,
     ignore_lateral_distribution: Bernoulli,
     decelerate_distribution: Bernoulli,
     y_star_selection_strategy: YStarSelectionStrategy,
 }
 
 impl Bike {
-    const fn left(&self) -> isize {
-        return self.occupation.left();
-    }
-
-    const fn back(&self) -> isize {
-        return self.occupation.back();
+    pub const fn front(&self) -> isize {
+        return self.occupation.front;
     }
 
     /// Returns the positions that the bike could move to laterally
@@ -222,7 +217,8 @@ impl Bike {
             YStarSelectionStrategy::Rightmost => rightmost_y_star_selector(y_prime_prime),
             YStarSelectionStrategy::UniformRandom => uniform_y_star_selector(y_prime_prime),
         }
-        .expect("y_prime_prime should never be empty");
+        // staying still is valid if nothing else is found to be
+        .unwrap_or(self.occupation);
     }
 
     pub fn forward_update<
@@ -622,7 +618,6 @@ impl TryInto<Bike> for &BikeBuilder {
                 forward_speed: self.forward_speed,
                 forward_acceleration: self.forward_acceleration,
                 rightward_speed_max: self.rightward_speed_max,
-                rightward_speed: 0,
                 ignore_lateral_distribution: Bernoulli::new(self.lateral_ignorance)?,
                 decelerate_distribution: Bernoulli::new(self.deceleration_prob)?,
                 y_star_selection_strategy: self.y_star_selection_strategy,

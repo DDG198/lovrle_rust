@@ -8,6 +8,7 @@ use std::{
 use rand::{seq::SliceRandom, thread_rng};
 
 use anyhow::{anyhow, Result};
+use rayon::prelude::*;
 
 use crate::{bike::Bike, car::Car};
 
@@ -250,6 +251,10 @@ impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> 
             })
             .unwrap_or(Self::total_width())
     }
+
+    fn cells(&self) -> &HashMap<Coord, Vehicle> {
+        return &self.cells;
+    }
 }
 
 impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW: usize>
@@ -306,6 +311,11 @@ impl<const L: usize, const BLW: usize, const MLW: usize> Display for RoadCells<L
         for long in 0..L {
             repr.push_str(&format!("{:1$}|", long, max_long_len));
             for lat in 0..(Self::total_width_isize() as usize) {
+                if lat == MLW {
+                    repr.push('|');
+                } else {
+                    repr.push(' ');
+                }
                 let cell_repr = match self
                     .get(&Coord {
                         lat: lat.try_into().unwrap(),
@@ -313,13 +323,13 @@ impl<const L: usize, const BLW: usize, const MLW: usize> Display for RoadCells<L
                     })
                     .unwrap()
                 {
-                    Some(Vehicle::Bike(id)) => format!(" B{:1$}", id, max_id_len),
-                    Some(Vehicle::Car(id)) => format!(" C{:1$}", id, max_id_len),
-                    None => String::from_iter(repeat(' ').take(max_id_len + 2)),
+                    Some(Vehicle::Bike(id)) => format!("B{:1$}", id, max_id_len),
+                    Some(Vehicle::Car(id)) => format!("C{:1$}", id, max_id_len),
+                    None => String::from_iter(repeat(' ').take(max_id_len + 1)),
                 };
                 repr.push_str(&cell_repr);
             }
-            repr.push('\n');
+            repr.push_str("|\n");
         }
 
         write!(f, "{}", repr)
@@ -350,11 +360,23 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     pub const fn self_total_width(&self) -> isize {
-        return Road::<B, C, L, BLW, MLW>::total_width();
+        return Self::total_width();
     }
 
     pub const fn total_width() -> isize {
         RoadCells::<L, BLW, MLW>::total_width_isize()
+    }
+
+    pub fn vehicle_positions_as_string(&self) -> String {
+        return format!(
+            "{{\"cars\": {:?}, \"bikes\": {:?}}}",
+            self.cars.map(|car| car.front()),
+            self.bikes.map(|bike| bike.front()),
+        );
+    }
+
+    pub fn cells(&self) -> &RoadCells<L, BLW, MLW> {
+        return &self.cells;
     }
 
     pub fn iter_car_positions(&self) -> impl Iterator<Item = (Coord, Vehicle)> + '_ {
@@ -462,7 +484,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     pub fn is_blocking(&self, coord: &Coord, maybe_max: Option<usize>) -> bool {
         return self
             .first_car_back(
-                coord, None, // potential optimisation: set reasonable max
+                coord, maybe_max, // potential optimisation: set reasonable max
             )
             .is_some_and(|car| {
                 let distance = car.front() - coord.long;
@@ -473,7 +495,7 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     pub fn update(&mut self) -> Result<()> {
         self.bikes_lateral_update();
         self.bikes_forward_update()?;
-        self.cars_update();
+        self.cars_update()?;
         return Ok(());
     }
 
@@ -486,7 +508,6 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             next_bikes
         };
 
-        // no need for this function if it's just being used in the one place
         self.wipe_bikes_from_cells();
         for (bike_id, new_bike) in shuffled_new_bikes {
             let bike_to_occupy = match self.collisions_for(&new_bike).is_empty() {
@@ -515,11 +536,11 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             .try_for_each(|(validated_cell, insert_vehicle)| {
                 match self.cells.cells.insert(validated_cell, insert_vehicle) {
                     Some(found_vehicle) => Err(anyhow!(
-                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}. Full cells {:?}",
+                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}. Full cells {}",
                         self.cells.cells.get(&validated_cell),
                         found_vehicle,
                         validated_cell,
-                        self.cells.cells
+                        self.cells
                     )),
                     None => Ok(()),
                 }
@@ -589,11 +610,30 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
             })
     }
 
+    fn wipe_cars_from_cells(&mut self) {
+        self.cars
+            .iter()
+            .map(|car| car.occupied_cells())
+            .flatten()
+            .map(|cell| RoadCells::<L, BLW, MLW>::validate_coord(cell).unwrap())
+            .for_each(|car_cell| {
+                let removed = self.cells.cells.remove(&car_cell);
+                debug_assert!(
+                    removed.is_some_and(|vehicle| match vehicle {
+                        Vehicle::Car(_) => true,
+                        Vehicle::Bike(_) => false,
+                    }),
+                    "expected to find a car at this location ({:?})",
+                    car_cell
+                );
+            })
+    }
+
     fn next_bikes_lateral(&self) -> [Bike; B] {
         // parallelise me for optimisation
         return self
             .bikes
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(bike_id, bike)| bike.lateral_update(bike_id, self))
             .collect::<Vec<Bike>>()
@@ -602,15 +642,49 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
     }
 
     fn next_bikes_forward(&self) -> [Bike; B] {
-        return self.bikes.map(|bike| bike.forward_update(self));
+        return self
+            .bikes
+            .par_iter()
+            .map(|bike| bike.forward_update(self))
+            .collect::<Vec<Bike>>()
+            .try_into()
+            .expect("array length should be okay due to const generic B");
     }
 
-    pub fn cars_update(&mut self) {
-        self.cars = self.next_cars();
+    pub fn cars_update(&mut self) -> Result<()> {
+        let next_cars = self.next_cars();
+        self.wipe_cars_from_cells();
+        next_cars
+            .iter()
+            .enumerate()
+            .map(|(index, car)| zip(car.occupied_cells(), repeat(index)))
+            .flatten()
+            // same criticism as for iter_car_positions
+            .map(|(cell, car_id)| (RoadCells::<L, BLW, MLW>::validate_coord(cell).unwrap(), Vehicle::Car(car_id)))
+            .try_for_each(|(validated_cell, insert_vehicle)| {
+                match self.cells.cells.insert(validated_cell, insert_vehicle) {
+                    Some(found_vehicle) => Err(anyhow!(
+                        "inserted vehicle {:?} collided with found vehicle {:?} at cell {:?}. Full cells {}\n",
+                        self.cells.cells.get(&validated_cell),
+                        found_vehicle,
+                        validated_cell,
+                        self.cells
+                    )),
+                    None => Ok(()),
+                }
+            })?;
+        self.cars = next_cars;
+        return Ok(());
     }
 
     fn next_cars(&self) -> [Car; C] {
-        return self.cars.map(|car| car.update(self));
+        let cars_vec: Vec<Car> = self
+            .cars
+            .par_iter()
+            .enumerate()
+            .map(|(car_id, car)| car.update(self, car_id))
+            .collect();
+        return cars_vec.try_into().unwrap();
     }
 
     pub fn front_gap(&self, occupation: &RectangleOccupier) -> Option<usize> {
@@ -633,6 +707,7 @@ mod tests {
 
     use crate::{
         bike::{Bike, BikeBuilder},
+        car::{Car, CarBuilder},
         proptest_defs::arb_rectangle_occupier,
         road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle},
     };
@@ -960,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn route_width_works() {
+    fn route_width_works_bike() {
         /*
         right ->
           0 1 2¦3 4 5 ^ back
@@ -995,6 +1070,42 @@ mod tests {
         assert_eq!(road.route_width(22), 2);
         assert_eq!(road.route_width(23), 2);
         assert_eq!(road.route_width(24), 6);
+    }
+
+    #[test]
+    fn route_width_works_car() {
+        /*
+        where a car is always has 0 route width
+        */
+
+        let long = 3;
+        let cars =
+            [CarBuilder::default().with_front_at(long)].map(|builder| builder.try_into().unwrap());
+        const ROAD_LEN: usize = 20;
+        const ROAD_WID: usize = 14;
+        let road = Road::<0, 1, ROAD_LEN, 0, ROAD_WID>::new([], cars).unwrap();
+
+        println!("cells:\n{}", road.cells());
+        let car_longs: HashSet<isize> = road
+            .get_car(0)
+            .occupied_cells()
+            .map(|coord| coord.long.rem_euclid(ROAD_LEN as isize))
+            .collect();
+        println!("occupied longs: {:?}", car_longs);
+        for long in 0..ROAD_LEN as isize {
+            println!("long: {}", long);
+            let expected_width = match car_longs.contains(&long) {
+                true => {
+                    println!("expected 0 width as car is here");
+                    0
+                }
+                false => {
+                    println!("expected full width as car is not here");
+                    ROAD_WID
+                }
+            };
+            assert_eq!(road.route_width(long), expected_width);
+        }
     }
 
     #[test]
@@ -1148,5 +1259,132 @@ mod tests {
     #[test]
     fn positions_on_nm_lane_higher_priority_than_m_lane() {
         let road = Road::<1, 0, 100, 7, 7>::new([BikeBuilder::default().build().unwrap()], []);
+    }
+
+    #[test]
+    fn medium_sized_example_road_builds() {
+        let _road: Road<10, 10, 100, 7, 7> = {
+            let bikes: Vec<Bike> = (0..10)
+                .map(|bike_id| {
+                    return BikeBuilder::default()
+                        .with_front_at(10 * bike_id)
+                        .with_right_at(8)
+                        .build()
+                        .unwrap();
+                })
+                .collect();
+            for bike in &bikes {
+                println!(
+                    "occupied_cells: {:?}",
+                    bike.occupied_cells().collect::<Vec<Coord>>()
+                )
+            }
+            let cars: Vec<Car> = (0..10)
+                .map(|car_id| {
+                    return CarBuilder::default()
+                        .with_front_at(10 * car_id)
+                        .build()
+                        .unwrap();
+                })
+                .collect();
+            for car in &cars {
+                println!(
+                    "occupied_cells: {:?}",
+                    car.occupied_cells().collect::<Vec<Coord>>()
+                )
+            }
+            Road::new(
+                bikes.try_into().expect("should be right number of bikes"),
+                cars.try_into().expect("should be right number of cars"),
+            )
+            .unwrap()
+        };
+    }
+
+    #[test]
+    fn medium_sized_example_road_updates() {
+        let mut road: Road<10, 10, 100, 7, 7> = {
+            let bikes: Vec<Bike> = (0..10)
+                .map(|bike_id| {
+                    return BikeBuilder::default()
+                        .with_front_at(10 * bike_id)
+                        .with_right_at(8)
+                        .build()
+                        .unwrap();
+                })
+                .collect();
+            let cars: Vec<Car> = (0..10)
+                .map(|car_id| {
+                    return CarBuilder::default()
+                        .with_front_at(10 * car_id)
+                        .build()
+                        .unwrap();
+                })
+                .collect();
+            Road::new(
+                bikes.try_into().expect("should be right number of bikes"),
+                cars.try_into().expect("should be right number of cars"),
+            )
+            .unwrap()
+        };
+
+        for iter_num in 0u16..1000 {
+            println!("Iteration #{}", iter_num);
+            println!("{}", road.cells());
+            road.update().unwrap();
+        }
+    }
+
+    #[test]
+    fn one_car_one_bike_updates() {
+        let mut road: Road<1, 1, 10, 4, 4> = Road::new(
+            [BikeBuilder::default()
+                .with_front_at(0)
+                .with_right_at(7)
+                .build()
+                .unwrap()],
+            [CarBuilder::default().with_front_at(0).build().unwrap()],
+        )
+        .unwrap();
+
+        for iter_num in 0u16..60000 {
+            println!("Iteration #{}", iter_num);
+            println!("{}\n", road.cells());
+            road.update().unwrap();
+        }
+    }
+
+    #[test]
+    fn one_car_one_bike_updates_v2() {
+        let mut road: Road<1, 1, 10, 4, 4> = Road::new(
+            [BikeBuilder::default()
+                .with_front_at(5)
+                .with_right_at(5)
+                .with_forward_speed(3)
+                .unwrap()
+                .build()
+                .unwrap()],
+            [CarBuilder::default().with_front_at(0).build().unwrap()],
+        )
+        .unwrap();
+
+        println!("{}", road.cells());
+        road.update().unwrap();
+    }
+
+    #[test]
+    fn car_occupation_correct() {
+        let cars = [CarBuilder::default()].map(|builder| builder.try_into().unwrap());
+        let road = Road::<0, 1, 20, 3, 3>::new([], cars).unwrap();
+
+        let car_occupation: HashSet<Coord> = road.get_car(0).occupied_cells().collect();
+        let cells_occupation: HashSet<Coord> = road
+            .cells()
+            .cells()
+            .keys()
+            .map(|coord| coord.to_owned())
+            .collect();
+
+        assert_eq!(car_occupation, cells_occupation);
     }
 }
