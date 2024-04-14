@@ -1,3 +1,5 @@
+use std::io::{stdout, Write};
+
 use lovrle_rust_v2::{
     bike::{Bike, BikeBuilder},
     car::{Car, CarBuilder},
@@ -5,6 +7,7 @@ use lovrle_rust_v2::{
 };
 
 fn main() {
+    print!("{{");
     let mut road: Road<200, 200, 2000, 7, 7> = {
         let bikes: Vec<Bike> = (0..200)
             .map(|bike_id| {
@@ -29,11 +32,13 @@ fn main() {
         )
         .unwrap()
     };
-    print!("[");
+    print!("\"vehicle_fronts_over_iterations\":[");
+    let mut lock = stdout().lock();
     for _iter_num in 0u16..60000 {
-        print!("[{}],", road.vehicle_positions_as_string());
+        write!(lock, "[{}],", road.vehicle_positions_as_string()).unwrap();
         road.update().unwrap();
     }
     print!("[{}]", road.vehicle_positions_as_string());
     print!("]");
+    println!("}}");
 }
