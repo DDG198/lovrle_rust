@@ -3,6 +3,7 @@ use std::cmp::{max, min};
 
 use anyhow::{anyhow, Result};
 use rand::{distributions::Bernoulli, prelude::Distribution};
+use serde::Serialize;
 
 use crate::road::{Coord, RoadOccupier};
 
@@ -11,7 +12,7 @@ pub struct Car {
     front: isize,
     length: usize,
     const_width: f32,
-    speed: isize,
+    pub speed: isize,
     fast_acceleration: isize,
     slow_acceleration: isize,
     max_slow_speed: isize,
@@ -143,6 +144,7 @@ fn lateral_occupancy(const_width: f32, speed: isize, alpha: f32) -> usize {
     return (const_width + additional_width).ceil() as usize;
 }
 
+#[derive(Debug, Serialize, Copy, Clone)]
 pub struct CarBuilder {
     front: isize,
     length: usize,

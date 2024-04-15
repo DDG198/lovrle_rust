@@ -5,10 +5,11 @@ use rand::{
     distributions::Bernoulli,
     prelude::{Distribution, IteratorRandom},
 };
+use serde::Serialize;
 
 use crate::road::{Coord, RectangleOccupier, Road, RoadOccupier, Vehicle};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize)]
 pub enum YStarSelectionStrategy {
     Rightmost,
     UniformRandom,
@@ -420,7 +421,7 @@ impl Default for Bike {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Copy, Clone)]
 pub struct BikeBuilder {
     front: isize,
     right: isize,
