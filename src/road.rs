@@ -367,6 +367,14 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         RoadCells::<L, BLW, MLW>::total_width_isize()
     }
 
+    pub fn car_density(&self) -> f64 {
+        return self.cars.map(|car| car.length).iter().sum::<usize>() as f64 / L as f64;
+    }
+
+    pub fn bike_density(&self) -> f64 {
+        return self.bikes.map(|bike| bike.length()).iter().sum::<usize>() as f64 / L as f64;
+    }
+
     pub fn vehicle_positions_as_string(&self) -> String {
         return format!(
             "{{\"cars\":{:?},\"bikes\":{:?}}}",

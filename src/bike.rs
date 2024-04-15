@@ -32,6 +32,10 @@ impl Bike {
         return self.occupation.front;
     }
 
+    pub const fn length(&self) -> usize {
+        return self.occupation.length;
+    }
+
     /// Returns the positions that the bike could move to laterally
     pub const fn potential_lateral_positions(&self) -> impl Iterator<Item = isize> {
         // could add something to do with the width of the bike here,

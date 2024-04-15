@@ -10,7 +10,7 @@ use crate::road::{Coord, RoadOccupier};
 #[derive(Copy, Clone, Debug)]
 pub struct Car {
     front: isize,
-    length: usize,
+    pub length: usize,
     const_width: f32,
     pub speed: isize,
     fast_acceleration: isize,
