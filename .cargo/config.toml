@@ -1,7 +1,0 @@
-[env]
-BIKES = "200"
-CARS = "200"
-LENGTH = "2000"
-MLW = "7"
-BLW = "7"
-ITERATIONS = "1000"
