@@ -1,21 +1,8 @@
 use std::io::{stdout, Write};
 
-use konst::{primitive::parse_usize, unwrap_ctx};
-
 use lovrle_rust_v2::{bike::BikeBuilder, car::CarBuilder, road::Road};
 
-macro_rules! get_env_var {
-    ($var_name:literal) => {
-        unwrap_ctx!(parse_usize(env!($var_name)))
-    };
-}
-
-const NUM_BIKES: usize = get_env_var!("NUM_BIKES");
-const NUM_CARS: usize = get_env_var!("NUM_CARS");
-const LENGTH: usize = get_env_var!("LENGTH");
-const ML_WIDTH: usize = get_env_var!("ML_WIDTH");
-const BL_WIDTH: usize = get_env_var!("BL_WIDTH");
-const NUM_ITERATIONS: usize = get_env_var!("NUM_ITERATIONS");
+include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
 fn format_iteration_info(road: &Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH>) -> String {
     return format!(
@@ -29,17 +16,21 @@ fn format_iteration_info(road: &Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_W
 fn main() {
     print!("{{");
     let mut road: Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH> = {
+        let bike_spacing = LENGTH / NUM_BIKES;
+        let car_spacing = LENGTH / NUM_CARS;
         let bikes: [BikeBuilder; NUM_BIKES] = (0..NUM_BIKES)
             .map(|bike_id| {
                 return BikeBuilder::default()
-                    .with_front_at(10 * bike_id as isize)
-                    .with_right_at(8);
+                    .with_front_at((bike_spacing * bike_id) as isize)
+                    .with_right_at((BL_WIDTH + ML_WIDTH) as isize - 1);
             })
             .collect::<Vec<BikeBuilder>>()
             .try_into()
             .expect("should be right number of bikes");
         let cars: [CarBuilder; NUM_CARS] = (0..NUM_CARS)
-            .map(|car_id| return CarBuilder::default().with_front_at(10 * car_id as isize))
+            .map(|car_id| {
+                return CarBuilder::default().with_front_at((car_spacing * car_id) as isize);
+            })
             .collect::<Vec<CarBuilder>>()
             .try_into()
             .expect("should be right number of cars");
