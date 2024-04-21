@@ -383,14 +383,25 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
         );
     }
 
-    pub fn mean_car_speed(&self) -> f64 {
-        let sum: isize = self.cars.map(|car| car.speed).iter().sum();
-        return (sum as f64) / (C as f64);
+    pub fn mean_car_speed(&self) -> Option<f64> {
+        return match C {
+            0 => None,
+            _ => Some((self.cars.map(|car| car.speed).iter().sum::<isize>() as f64) / (C as f64)),
+        };
     }
 
-    pub fn mean_bike_speed(&self) -> f64 {
-        let sum: isize = self.bikes.map(|bike| bike.forward_speed).iter().sum();
-        return (sum as f64) / (C as f64);
+    pub fn mean_bike_speed(&self) -> Option<f64> {
+        return match B {
+            0 => None,
+            _ => Some(
+                (self
+                    .bikes
+                    .map(|bike| bike.forward_speed)
+                    .iter()
+                    .sum::<isize>() as f64)
+                    / (B as f64),
+            ),
+        };
     }
 
     pub fn cells(&self) -> &RoadCells<L, BLW, MLW> {
