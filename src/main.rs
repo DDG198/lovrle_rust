@@ -5,19 +5,29 @@ use lovrle_rust_v2::{bike::BikeBuilder, car::CarBuilder, road::Road};
 include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
 fn format_iteration_info(road: &Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH>) -> String {
+    let car_speed_str = match road.mean_car_speed() {
+        None => String::new(),
+        Some(car_speed) => format!(",\"mean_car_speed\":{}", car_speed),
+    };
+    let bike_speed_str = match road.mean_bike_speed() {
+        None => String::new(),
+        Some(bike_speed) => format!(",\"mean_bike_speed\":{}", bike_speed),
+    };
     return format!(
-        "{{\"vehicle_fronts\":{},\"mean_car_speed\":{},\"mean_bike_speed\":{}}}",
+        "{{\"vehicle_fronts\":{}{}{}}}",
         road.vehicle_positions_as_string(),
-        road.mean_car_speed(),
-        road.mean_bike_speed()
+        car_speed_str,
+        bike_speed_str
     );
 }
 
 fn main() {
     print!("{{");
     let mut road: Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH> = {
-        let bike_spacing = LENGTH / NUM_BIKES;
-        let car_spacing = LENGTH / NUM_CARS;
+        // no bikes or cars mean the arrays will be empty so the zero spacing
+        // won't be a problem
+        let bike_spacing = LENGTH.checked_div(NUM_BIKES).unwrap_or(0);
+        let car_spacing = LENGTH.checked_div(NUM_CARS).unwrap_or(0);
         let bikes: [BikeBuilder; NUM_BIKES] = (0..NUM_BIKES)
             .map(|bike_id| {
                 return BikeBuilder::default()
