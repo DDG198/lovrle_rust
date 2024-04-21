@@ -4,6 +4,9 @@ use lovrle_rust_v2::{bike::BikeBuilder, car::CarBuilder, road::Road};
 
 include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
+const REF: &str = include_str!("../.git/HEAD");
+const REF_MASTER: &str = include_str!("../.git/refs/heads/main");
+
 fn format_iteration_info(road: &Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH>) -> String {
     let car_speed_str = match road.mean_car_speed() {
         None => String::new(),
@@ -23,6 +26,12 @@ fn format_iteration_info(road: &Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_W
 
 fn main() {
     print!("{{");
+    let version = if REF.trim() == "ref: refs/heads/main" {
+        REF_MASTER.trim()
+    } else {
+        REF.trim()
+    };
+    print!("\"version\":\"{}\",", version);
     let mut road: Road<NUM_BIKES, NUM_CARS, LENGTH, BL_WIDTH, ML_WIDTH> = {
         // no bikes or cars mean the arrays will be empty so the zero spacing
         // won't be a problem
