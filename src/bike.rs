@@ -305,9 +305,14 @@ fn y_prime_prime_j_t_plus_1<
         YPrimePrimeFilter::MotorLaneNonBlocking => {
             avoid_blocking_ypp_filter(y_prime_j_t_plus_1, road, current_occupation.right).collect()
         }
-        YPrimePrimeFilter::BikeLane => {
-            avoid_blocking_ypp_filter(y_prime_j_t_plus_1, road, current_occupation.right).collect()
-        }
+        YPrimePrimeFilter::BikeLane => avoid_blocking_ypp_filter(
+            y_prime_j_t_plus_1,
+            road,
+            // the boundary is when the right of the vehicle is BLW + width, so
+            // left is BLW
+            (BLW + current_occupation.width) as isize,
+        )
+        .collect(),
     };
 }
 
