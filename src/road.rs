@@ -516,7 +516,9 @@ impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW
                 coord, maybe_max, // potential optimisation: set reasonable max
             )
             .is_some_and(|car| {
-                let distance = car.front() - coord.long;
+                // car.front() is definitely okay except for the first iteration
+                // where whatever value was given to Road::new() is used.
+                let distance = car.front() - (coord.long).rem_euclid(L as isize);
                 return car.next_iteration_potential_speed() < distance;
             });
     }
