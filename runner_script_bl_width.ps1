@@ -8,6 +8,7 @@ For ($num_cars = 0; $num_cars -lt 401; $num_cars+=50) {
     $env:NUM_BIKES = $num_bikes;
     $env:NUM_CARS = $num_cars;
     $env:BL_WIDTH = $bl_width;
+    $env:ML_WIDTH = 14 - $env:BL_WIDTH;
     cargo build --release;
     Write-Output "building complete";
 
