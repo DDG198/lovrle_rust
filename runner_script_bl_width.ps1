@@ -15,7 +15,7 @@ For ($num_cars = 0; $num_cars -lt 401; $num_cars+=50) {
     $out_file = Join-Path -Path $data_dir -ChildPath $file_name;
     Write-Output "setting up environment";
 
-    Write-Output "outfile: " $outfile;
+    Write-Output "outfile: " $out_file
 
     if (Test-Path $out_file -PathType Leaf) {
         Write-Output "outfile already exists, skipping";
