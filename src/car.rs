@@ -159,6 +159,7 @@ pub struct CarBuilder {
     max_slow_speed: isize,
 }
 
+#[allow(dead_code)]
 impl CarBuilder {
     pub fn with_front_at(&self, front: isize) -> Self {
         return Self { front, ..*self };

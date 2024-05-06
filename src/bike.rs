@@ -27,6 +27,7 @@ pub struct Bike {
     y_star_selection_strategy: YStarSelectionStrategy,
 }
 
+#[allow(dead_code)]
 impl Bike {
     pub const fn front(&self) -> isize {
         return self.occupation.front;

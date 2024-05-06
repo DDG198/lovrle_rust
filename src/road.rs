@@ -124,6 +124,7 @@ pub struct RoadCells<const L: usize, const BLW: usize, const MLW: usize> {
     cells: HashMap<Coord, Vehicle>,
 }
 
+#[allow(dead_code)]
 impl<const L: usize, const BLW: usize, const MLW: usize> RoadCells<L, BLW, MLW> {
     fn empty(capacity: usize) -> Self {
         Self {
@@ -344,6 +345,7 @@ pub struct Road<const B: usize, const C: usize, const L: usize, const BLW: usize
     cells: RoadCells<L, BLW, MLW>,
 }
 
+#[allow(dead_code)]
 impl<const B: usize, const C: usize, const L: usize, const BLW: usize, const MLW: usize>
     Road<B, C, L, BLW, MLW>
 {
